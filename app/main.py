@@ -32,6 +32,12 @@ env_path = root_dir / ".env"
 # Load environment variables from the correct path
 load_dotenv(env_path)
 
+def get_db_path():
+    """Get database path from environment or use default"""
+    if os.getenv("RAILWAY_ENVIRONMENT"):
+        # Use data directory in Railway
+        return "data/saskedchat.db"
+    return "app/data/saskedchat.db"
 
 # Cache Implementation
 class FeedCache:
@@ -57,10 +63,10 @@ class FeedCache:
 
 # Optimized Database Class
 class Database:
-    def __init__(self, db_path: str = "app/data/saskedchat.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = None):
+        self.db_path = db_path or get_db_path()
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        self.connection = sqlite3.connect(self.db_path)  # Create a single connection
+        self.pool = sqlite3.connect(self.db_path)  # Create a single connection
         self.init_db()
 
     def get_connection(self):
