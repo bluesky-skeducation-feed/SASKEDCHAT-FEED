@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 from typing import Optional, List, Dict
 import sqlite3
@@ -241,6 +241,15 @@ def init_bluesky_client():
 
 # Initialize FastAPI app
 app = FastAPI(title="SaskEdChat Feed")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 # Initialize Bluesky client
 try:
