@@ -1,0 +1,102 @@
+{
+  "timestamp": "2024-11-29T19:19:08.591523",
+  "metrics": {
+    "ingestion": {
+      "subscription_stats": {
+        "total_time": 2.5259430408477783,
+        "average_time": 0.05051759719848633,
+        "median_time": 0.047644615173339844,
+        "p95_time": 0.06705284118652344,
+        "count": 50
+      },
+      "post_stats": {
+        "total_time": 48.62403607368469,
+        "average_time": 1.4022693548202514,
+        "median_time": 1.3772658109664917,
+        "p95_time": 3.066375970840454,
+        "count": 1000
+      }
+    },
+    "concurrent_reads": {
+      "average_time": 2.4005631899833677,
+      "median_time": 2.333793878555298,
+      "p95_time": 4.279335021972656,
+      "errors": 0,
+      "successful_requests": 100,
+      "total_requests": 100
+    },
+    "edge_cases": [
+      {
+        "name": "Unicode post",
+        "success": true,
+        "processing_time": 0.060723304748535156,
+        "response_code": 200,
+        "response_body": {
+          "status": "success",
+          "matched_hashtags": [
+            "#SaskEdChat",
+            "#SaskEd"
+          ],
+          "user": "did:plc:test10"
+        }
+      },
+      {
+        "name": "Long post",
+        "success": true,
+        "processing_time": 0.05194592475891113,
+        "response_code": 200,
+        "response_body": {
+          "status": "success",
+          "matched_hashtags": [
+            "#SaskEdChat",
+            "#SaskEd"
+          ],
+          "user": "did:plc:test10"
+        }
+      },
+      {
+        "name": "Multiple hashtags",
+        "success": true,
+        "processing_time": 0.057106971740722656,
+        "response_code": 200,
+        "response_body": {
+          "status": "success",
+          "matched_hashtags": [
+            "#SaskEdChat",
+            "#SaskEd",
+            "#SKEd"
+          ],
+          "user": "did:plc:test10"
+        }
+      },
+      {
+        "name": "Special characters",
+        "success": true,
+        "processing_time": 0.06148791313171387,
+        "response_code": 200,
+        "response_body": {
+          "status": "success",
+          "matched_hashtags": [
+            "#SaskEdChat",
+            "#SaskEd"
+          ],
+          "user": "did:plc:test10"
+        }
+      },
+      {
+        "name": "HTML content",
+        "success": true,
+        "processing_time": 0.04701805114746094,
+        "response_code": 200,
+        "response_body": {
+          "status": "success",
+          "matched_hashtags": [
+            "#SaskEdChat",
+            "#SaskEd"
+          ],
+          "user": "did:plc:test10"
+        }
+      }
+    ]
+  }
+}

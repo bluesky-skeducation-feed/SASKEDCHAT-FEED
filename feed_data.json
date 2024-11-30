@@ -1,0 +1,38 @@
+{
+  "cursor": "1732149978818",
+  "feed": [
+    {
+      "post": {
+        "uri": "at://did:plc:bob456/post/1",
+        "cid": "cid789",
+        "author": "did:plc:bob456",
+        "record": {
+          "text": "Bob's first #SaskEdChat post",
+          "createdAt": "2024-11-20T20:46:18.818000"
+        }
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:alice123/post/2",
+        "cid": "cid456",
+        "author": "did:plc:alice123",
+        "record": {
+          "text": "Another #SaskEdChat post for testing",
+          "createdAt": "2024-11-20T19:46:18.818000"
+        }
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:alice123/post/1",
+        "cid": "cid123",
+        "author": "did:plc:alice123",
+        "record": {
+          "text": "Testing the #SaskEdChat feed!",
+          "createdAt": "2024-11-20T18:46:18.818000"
+        }
+      }
+    }
+  ]
+}
