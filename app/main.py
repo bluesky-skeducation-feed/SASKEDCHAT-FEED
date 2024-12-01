@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 from fastapi import FastAPI, HTTPException
+=======
+from fastapi.middleware.cors import CORSMiddleware
+>>>>>>> f83c0878abaa6d113c6278955fad6e7284429438
 from pydantic import BaseModel, field_validator
 from typing import Optional, List, Dict
 import sqlite3
@@ -32,6 +36,15 @@ env_path = root_dir / ".env"
 # Load environment variables from the correct path
 load_dotenv(env_path)
 
+<<<<<<< HEAD
+=======
+def get_db_path():
+    """Get database path from environment or use default"""
+    if os.getenv("RAILWAY_ENVIRONMENT"):
+        # Use data directory in Railway
+        return "data/saskedchat.db"
+    return "app/data/saskedchat.db"
+>>>>>>> f83c0878abaa6d113c6278955fad6e7284429438
 
 # Cache Implementation
 class FeedCache:
@@ -57,10 +70,17 @@ class FeedCache:
 
 # Optimized Database Class
 class Database:
+<<<<<<< HEAD
     def __init__(self, db_path: str = "app/data/saskedchat.db"):
         self.db_path = db_path
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self.connection = sqlite3.connect(self.db_path)  # Create a single connection
+=======
+    def __init__(self, db_path: str = None):
+        self.db_path = db_path or get_db_path()
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        self.pool = sqlite3.connect(self.db_path)  # Create a single connection
+>>>>>>> f83c0878abaa6d113c6278955fad6e7284429438
         self.init_db()
 
     def get_connection(self):
@@ -236,6 +256,18 @@ def init_bluesky_client():
 # Initialize FastAPI app
 app = FastAPI(title="SaskEdChat Feed")
 
+<<<<<<< HEAD
+=======
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
+
+>>>>>>> f83c0878abaa6d113c6278955fad6e7284429438
 # Initialize Bluesky client
 try:
     client = init_bluesky_client()
