@@ -80,18 +80,18 @@ class FeedCache:
 # Optimized Database Class
 class Database:
     def __init__(self):
-    db_url = os.getenv('DATABASE_URL')
-    if not db_url:
-        raise ValueError("DATABASE_URL environment variable is not set")
-    self.connection = psycopg2.connect(
-        db_url,
-        sslmode='require'
-    )
-    self._init_db()
-    
-    def __del__(self):
-        if hasattr(self, "connection") and self.connection:
-            self.connection.close()
+        db_url = os.getenv('DATABASE_URL')
+        if not db_url:
+            raise ValueError("DATABASE_URL environment variable is not set")
+        self.connection = psycopg2.connect(
+            db_url,
+            sslmode='require'
+        )
+        self._init_db()
+        
+        def __del__(self):
+            if hasattr(self, "connection") and self.connection:
+                self.connection.close()
 
     @contextmanager
     def get_cursor(self):
