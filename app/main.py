@@ -1,8 +1,5 @@
-<<<<<<< HEAD
-from fastapi import FastAPI, HTTPException
-=======
 from fastapi.middleware.cors import CORSMiddleware
->>>>>>> f83c0878abaa6d113c6278955fad6e7284429438
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, field_validator
 from typing import Optional, List, Dict
 import sqlite3
@@ -12,7 +9,7 @@ from dotenv import load_dotenv
 from atproto import Client
 import logging
 from pathlib import Path
-from contextlib import contextmanager  # For @contextmanager
+from contextlib import contextmanager, asynccontextmanager  # For @contextmanager
 
 MONITORED_HASHTAGS = [
     "#SaskEdChat",
@@ -29,27 +26,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Get the root directory (where .env is located)
+# Get the root directory and env path with Railway consideration
 root_dir = Path(__file__).resolve().parent.parent
-env_path = root_dir / ".env"
+env_path = root_dir / ".env" if not os.getenv("RAILWAY_ENVIRONMENT") else None
 
 # Load environment variables from the correct path
-load_dotenv(env_path)
+if env_path:
+    load_dotenv(env_path)
 
-<<<<<<< HEAD
-=======
+
 def get_db_path():
     """Get database path from environment or use default"""
     if os.getenv("RAILWAY_ENVIRONMENT"):
-        # Use data directory in Railway
-        return "data/saskedchat.db"
+        return ":memory:"
     return "app/data/saskedchat.db"
->>>>>>> f83c0878abaa6d113c6278955fad6e7284429438
+
 
 # Cache Implementation
 class FeedCache:
-    def __init__(self, ttl_seconds: int = 60):
+    def __init__(self, ttl_seconds: int = 60, max_size: int = 1000):
         self.ttl_seconds = ttl_seconds
+        self.max_size = max_size
         self._cache = {}
         self._timestamps = {}
 
@@ -64,27 +61,28 @@ class FeedCache:
         return None
 
     def set(self, key: str, value: dict):
+        if len(self._cache) >= self.max_size:
+            # Remove oldest item
+            oldest_key = min(self._timestamps.items(), key=lambda x: x[1])[0]
+            del self._cache[oldest_key]
+            del self._timestamps[oldest_key]
         self._cache[key] = value
         self._timestamps[key] = datetime.now()
+
+    def clear(self):
+        """Clear all cached items"""
+        self._cache.clear()
+        self._timestamps.clear()
 
 
 # Optimized Database Class
 class Database:
-<<<<<<< HEAD
-    def __init__(self, db_path: str = "app/data/saskedchat.db"):
-        self.db_path = db_path
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        self.connection = sqlite3.connect(self.db_path)  # Create a single connection
-=======
     def __init__(self, db_path: str = None):
         self.db_path = db_path or get_db_path()
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        self.pool = sqlite3.connect(self.db_path)  # Create a single connection
->>>>>>> f83c0878abaa6d113c6278955fad6e7284429438
+        if self.db_path != ":memory:":
+            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        self.connection = sqlite3.connect(self.db_path, check_same_thread=False)
         self.init_db()
-
-    def get_connection(self):
-        return self.connection  # Return the existing connection
 
     @contextmanager
     def get_cursor(self):
@@ -99,59 +97,9 @@ class Database:
         finally:
             cursor.close()
 
-    def init_db(self):
-        with self.get_cursor() as cursor:
-            # Create tables
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS subscribers (
-                    did TEXT PRIMARY KEY,
-                    handle TEXT,
-                    timestamp INTEGER
-                )
-            """
-            )
-
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS posts (
-                    uri TEXT PRIMARY KEY,
-                    cid TEXT,
-                    author TEXT,
-                    text TEXT,
-                    timestamp INTEGER
-                )
-            """
-            )
-
-            # Create indexes
-            cursor.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_posts_timestamp 
-                ON posts(timestamp DESC)
-            """
-            )
-
-            cursor.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_posts_author 
-                ON posts(author)
-            """
-            )
-
-            cursor.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_posts_text 
-                ON posts(text)
-            """
-            )
-
-            cursor.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_subscribers_handle 
-                ON subscribers(handle)
-            """
-            )
+    def __del__(self):
+        if hasattr(self, "connection") and self.connection:
+            self.connection.close()
 
 
 # Pydantic models
@@ -223,6 +171,7 @@ feed_cache = FeedCache(ttl_seconds=60)
 
 # Initialize Bluesky client with error handling
 def init_bluesky_client():
+    """Initialize the Bluesky client with error handling and logging."""
     # Add debug logging for environment variables
     logger.info(f"Loading environment variables from: {env_path}")
 
@@ -253,11 +202,19 @@ def init_bluesky_client():
         raise ConnectionError(f"Bluesky login failed: {str(e)}")
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    yield
+    # Shutdown: cleanup connections
+    if hasattr(db, "connection") and db.connection:
+        db.connection.close()
+    feed_cache.clear()
+
+
 # Initialize FastAPI app
 app = FastAPI(title="SaskEdChat Feed")
 
-<<<<<<< HEAD
-=======
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -267,22 +224,27 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
->>>>>>> f83c0878abaa6d113c6278955fad6e7284429438
 # Initialize Bluesky client
 try:
-    client = init_bluesky_client()
+    app.state.bsky_client = init_bluesky_client()
 except (ValueError, ConnectionError) as e:
     logger.error(f"Could not initialize Bluesky client: {str(e)}")
-    client = Client()  # Create an unauthenticated client as fallback
+    app.state.bsky_client = None
 
 
 @app.get("/healthcheck")
-async def healthcheck():
+async def healthcheck(request: Request):
     """Check if the service is running and database is accessible"""
     try:
         with db.get_cursor() as cursor:
             cursor.execute("SELECT 1")
-        return {"status": "healthy", "database": "connected"}
+
+        client_status = "connected" if request.app.state.bsky_client else "disconnected"
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "bluesky_client": client_status,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
@@ -317,8 +279,8 @@ async def handle_subscription(subscription: Subscription):
 async def handle_post(post: Post):
     try:
         # Check if author is a subscriber first
-        with db.get_connection() as conn:
-            cursor = conn.execute(
+        with db.get_cursor() as cursor:
+            cursor.execute(
                 "SELECT did FROM subscribers WHERE did = ?", (post.author["did"],)
             )
 
@@ -341,7 +303,7 @@ async def handle_post(post: Post):
                 }
 
             # Store the post if both checks pass
-            conn.execute(
+            cursor.execute(
                 """
                 INSERT OR REPLACE INTO posts (uri, cid, author, text, timestamp)
                 VALUES (?, ?, ?, ?, ?)
@@ -370,12 +332,16 @@ async def handle_post(post: Post):
 
 
 @app.get("/feed", response_model=FeedResponse)
-async def get_feed(limit: Optional[int] = 50, page_cursor: Optional[str] = None, bypass_cache: bool = False):
+async def get_feed(
+    limit: Optional[int] = 50,
+    page_cursor: Optional[str] = None,
+    bypass_cache: bool = False,
+):
     """Get the feed of SaskEdChat posts with caching"""
     logger.debug(f"Feed request received - limit: {limit}, page_cursor: {page_cursor}")
-    
+
     cache_key = f"feed:limit={limit}:cursor={page_cursor}"
-    
+
     # Only check cache if not bypassing
     if not bypass_cache:
         cached_response = feed_cache.get(cache_key)
@@ -391,20 +357,23 @@ async def get_feed(limit: Optional[int] = 50, page_cursor: Optional[str] = None,
                 INNER JOIN subscribers s ON p.author = s.did
                 WHERE p.text LIKE '%#SaskEdChat%'
             """
-            
+
             params = []
             if page_cursor:
                 query += " AND p.timestamp < ?"
                 params.append(int(page_cursor))
-            
+
             query += " ORDER BY p.timestamp DESC LIMIT ?"
             params.append(limit)
-            
+
             logger.debug(f"Executing query: {query}")
-            
+
             cursor.execute(query, params)
             rows = cursor.fetchall()
-            
+
+            if not rows:
+                return FeedResponse(cursor=None, feed=[])
+
             feed = []
             for row in rows:
                 feed.append(
@@ -422,16 +391,16 @@ async def get_feed(limit: Optional[int] = 50, page_cursor: Optional[str] = None,
                         }
                     )
                 )
-            
+
             next_cursor = str(rows[-1][4]) if rows else None
             response = FeedResponse(cursor=next_cursor, feed=feed)
-            
+
             # Only cache if not bypassing
             if not bypass_cache:
                 feed_cache.set(cache_key, response.model_dump())
-            
+
             return response
-            
+
     except Exception as e:
         logger.error(f"Feed error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
