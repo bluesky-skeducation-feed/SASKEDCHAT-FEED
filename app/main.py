@@ -1,8 +1,7 @@
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, field_validator
-from typing import Optional, List, Dict, Union
-import sqlite3
+from typing import Optional, List, Dict
 from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv
@@ -453,14 +452,12 @@ async def get_feed(
 async def did_json():
     return {
         "@context": ["https://www.w3.org/ns/did/v1"],
-        "id": "did:web:web-production-96221.up.railway.app",
-        "service": [
-            {
-                "id": "#bsky_fg",
-                "type": "BskyFeedGenerator",
-                "serviceEndpoint": "https://web-production-96221.up.railway.app",
-            }
-        ],
+        "id": "did:web:web-production-6afef.up.railway.app",
+        "service": [{
+            "id": "#bsky_fg",
+            "type": "BskyFeedGenerator",
+            "serviceEndpoint": "https://web-production-6afef.up.railway.app"
+        }]
     }
 
 
