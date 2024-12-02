@@ -88,15 +88,18 @@ class Database:
         """Initialize database tables and indexes"""
         with self.get_cursor() as cursor:
             # Create tables
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS subscribers (
                     did TEXT PRIMARY KEY,
                     handle TEXT,
                     timestamp INTEGER
                 )
-            """)
+            """
+            )
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS posts (
                     uri TEXT PRIMARY KEY,
                     cid TEXT,
@@ -104,28 +107,37 @@ class Database:
                     text TEXT,
                     timestamp INTEGER
                 )
-            """)
+            """
+            )
 
             # Create indexes
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_posts_timestamp 
                 ON posts(timestamp DESC)
-            """)
+            """
+            )
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_posts_author 
                 ON posts(author)
-            """)
+            """
+            )
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_posts_text 
                 ON posts(text)
-            """)
+            """
+            )
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_subscribers_handle 
                 ON subscribers(handle)
-            """)
+            """
+            )
 
     @contextmanager
     def get_cursor(self):
@@ -206,9 +218,11 @@ class FeedResponse(BaseModel):
             "feed": [post.model_dump() for post in self.feed],
         }
 
+
 class FeedGeneratorView(BaseModel):
     feed: List[dict]
     cursor: Optional[str] = None
+
 
 # Initialize database and cache
 db = Database()
@@ -325,13 +339,19 @@ async def handle_subscription(subscription: Subscription):
 @app.post("/post")
 async def handle_post(post: Post):
     try:
+        logger.info(f"Received post: {post.record.get('text', '')}")
+
         # Check if author is a subscriber first
         with db.get_cursor() as cursor:
             cursor.execute(
                 "SELECT did FROM subscribers WHERE did = ?", (post.author["did"],)
             )
 
-            if not cursor.fetchone():
+            subscriber = cursor.fetchone()
+            logger.info(f"Subscriber check result: {subscriber}")
+
+            if not subscriber:
+                logger.info(f"User {post.author['did']} not subscribed")
                 return {
                     "status": "skipped",
                     "reason": "not subscribed",
@@ -340,9 +360,13 @@ async def handle_post(post: Post):
 
             # Only check hashtags if user is a subscriber
             post_text = post.record.get("text", "")
-            found_hashtags = [tag for tag in MONITORED_HASHTAGS if tag in post_text]
+            found_hashtags = [
+                tag for tag in MONITORED_HASHTAGS if tag.lower() in post_text.lower()
+            ]
+            logger.info(f"Found hashtags: {found_hashtags}")
 
             if not found_hashtags:
+                logger.info("No monitored hashtags found")
                 return {
                     "status": "skipped",
                     "reason": "no monitored hashtags found",
@@ -366,6 +390,7 @@ async def handle_post(post: Post):
                     ),
                 ),
             )
+            logger.info("Post stored successfully")
 
         return {
             "status": "success",
@@ -375,6 +400,7 @@ async def handle_post(post: Post):
 
     except Exception as e:
         logger.error(f"Post error: {str(e)}")
+        logger.exception("Detailed error:")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -452,17 +478,21 @@ async def get_feed(
         logger.error(f"Feed error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.get("/.well-known/did.json")
 async def did_json():
     return {
         "@context": ["https://www.w3.org/ns/did/v1"],
         "id": "did:web:web-production-96221.up.railway.app",
-        "service": [{
-            "id": "#bsky_fg",
-            "type": "BskyFeedGenerator",
-            "serviceEndpoint": "https://web-production-96221.up.railway.app"
-        }]
+        "service": [
+            {
+                "id": "#bsky_fg",
+                "type": "BskyFeedGenerator",
+                "serviceEndpoint": "https://web-production-96221.up.railway.app",
+            }
+        ],
     }
+
 
 @app.get("/xrpc/app.bsky.feed.getFeedSkeleton")
 async def get_feed_skeleton(
@@ -480,27 +510,25 @@ async def get_feed_skeleton(
                 ORDER BY p.timestamp DESC
                 LIMIT ?
             """
-            
+
             cursor_db.execute(query, [limit])
             rows = cursor_db.fetchall()
-            
+
             feed_items = [
                 {
                     "post": row[0],  # uri
                 }
                 for row in rows
             ]
-            
+
             next_cursor = str(rows[-1][2]) if rows else None
-            
-            return {
-                "cursor": next_cursor,
-                "feed": feed_items
-            }
-            
+
+            return {"cursor": next_cursor, "feed": feed_items}
+
     except Exception as e:
         logger.error(f"Feed error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/xrpc/app.bsky.feed.describeFeedGenerator")
 async def describe_feed_generator():
@@ -513,8 +541,50 @@ async def describe_feed_generator():
                 "displayName": "SaskEdChat Feed",
                 "description": "A feed aggregating posts with Saskatchewan education-related hashtags",
             }
-        ]
+        ],
     }
+
+
+@app.get("/debug/posts")
+async def debug_posts():
+    """Debug endpoint to check posts in database"""
+    try:
+        with db.get_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT * FROM posts 
+                ORDER BY timestamp DESC 
+                LIMIT 10
+            """
+            )
+            posts = cursor.fetchall()
+
+            cursor.execute("SELECT COUNT(*) FROM posts")
+            total = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(*) FROM subscribers")
+            sub_count = cursor.fetchone()[0]
+
+            return {
+                "total_posts": total,
+                "total_subscribers": sub_count,
+                "recent_posts": posts,
+            }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/debug/subscribers")
+async def debug_subscribers():
+    """Debug endpoint to check subscribers"""
+    try:
+        with db.get_cursor() as cursor:
+            cursor.execute("SELECT * FROM subscribers")
+            subs = cursor.fetchall()
+            return {"subscribers": subs}
+    except Exception as e:
+        return {"error": str(e)}
+
 
 if __name__ == "__main__":
     import uvicorn
