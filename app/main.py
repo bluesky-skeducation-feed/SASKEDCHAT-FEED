@@ -80,8 +80,14 @@ class FeedCache:
 # Optimized Database Class
 class Database:
     def __init__(self):
-        self.connection = psycopg2.connect(os.getenv('DATABASE_URL'))
-        self._init_db()
+    db_url = os.getenv('DATABASE_URL')
+    if not db_url:
+        raise ValueError("DATABASE_URL environment variable is not set")
+    self.connection = psycopg2.connect(
+        db_url,
+        sslmode='require'
+    )
+    self._init_db()
     
     def __del__(self):
         if hasattr(self, "connection") and self.connection:
