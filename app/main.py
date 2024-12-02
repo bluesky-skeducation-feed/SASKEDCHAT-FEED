@@ -82,7 +82,50 @@ class Database:
         if self.db_path != ":memory:":
             os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self.connection = sqlite3.connect(self.db_path, check_same_thread=False)
-        self.init_db()
+        self._init_db()  # Note the underscore prefix
+
+    def _init_db(self):  # Note the underscore prefix
+        """Initialize database tables and indexes"""
+        with self.get_cursor() as cursor:
+            # Create tables
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS subscribers (
+                    did TEXT PRIMARY KEY,
+                    handle TEXT,
+                    timestamp INTEGER
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS posts (
+                    uri TEXT PRIMARY KEY,
+                    cid TEXT,
+                    author TEXT,
+                    text TEXT,
+                    timestamp INTEGER
+                )
+            """)
+
+            # Create indexes
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_posts_timestamp 
+                ON posts(timestamp DESC)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_posts_author 
+                ON posts(author)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_posts_text 
+                ON posts(text)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_subscribers_handle 
+                ON subscribers(handle)
+            """)
 
     @contextmanager
     def get_cursor(self):
