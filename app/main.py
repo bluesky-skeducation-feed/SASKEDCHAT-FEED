@@ -10,6 +10,8 @@ from atproto import Client
 import logging
 from pathlib import Path
 from contextlib import contextmanager, asynccontextmanager  # For @contextmanager
+import psycopg2
+from psycopg2.extras import DictCursor
 
 MONITORED_HASHTAGS = [
     "#SaskEdChat",
@@ -77,67 +79,13 @@ class FeedCache:
 
 # Optimized Database Class
 class Database:
-    def __init__(self, db_path: str = None):
-        self.db_path = db_path or get_db_path()
-        if self.db_path != ":memory:":
-            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        self.connection = sqlite3.connect(self.db_path, check_same_thread=False)
-        self._init_db()  # Note the underscore prefix
-
-    def _init_db(self):  # Note the underscore prefix
-        """Initialize database tables and indexes"""
-        with self.get_cursor() as cursor:
-            # Create tables
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS subscribers (
-                    did TEXT PRIMARY KEY,
-                    handle TEXT,
-                    timestamp INTEGER
-                )
-            """
-            )
-
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS posts (
-                    uri TEXT PRIMARY KEY,
-                    cid TEXT,
-                    author TEXT,
-                    text TEXT,
-                    timestamp INTEGER
-                )
-            """
-            )
-
-            # Create indexes
-            cursor.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_posts_timestamp 
-                ON posts(timestamp DESC)
-            """
-            )
-
-            cursor.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_posts_author 
-                ON posts(author)
-            """
-            )
-
-            cursor.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_posts_text 
-                ON posts(text)
-            """
-            )
-
-            cursor.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_subscribers_handle 
-                ON subscribers(handle)
-            """
-            )
+    def __init__(self):
+        self.connection = psycopg2.connect(os.getenv('DATABASE_URL'))
+        self._init_db()
+    
+    def __del__(self):
+        if hasattr(self, "connection") and self.connection:
+            self.connection.close()
 
     @contextmanager
     def get_cursor(self):
@@ -152,9 +100,35 @@ class Database:
         finally:
             cursor.close()
 
-    def __del__(self):
-        if hasattr(self, "connection") and self.connection:
-            self.connection.close()
+
+    def _init_db(self):
+        with self.get_cursor() as cursor:
+            # Create tables
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS subscribers (
+                    did TEXT PRIMARY KEY,
+                    handle TEXT,
+                    timestamp BIGINT
+                )
+            """)
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS posts (
+                    uri TEXT PRIMARY KEY,
+                    cid TEXT,
+                    author TEXT,
+                    text TEXT,
+                    timestamp BIGINT
+                )
+            """)
+
+            # Create indexes
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_posts_timestamp 
+                ON posts(timestamp DESC)
+            """)
+
+    
 
 
 # Pydantic models
