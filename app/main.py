@@ -574,6 +574,18 @@ async def debug_posts():
         return {"error": str(e)}
 
 
+@app.get("/debug/subscribers")
+async def debug_subscribers():
+    """Debug endpoint to check subscribers"""
+    try:
+        with db.get_cursor() as cursor:
+            cursor.execute("SELECT * FROM subscribers")
+            subs = cursor.fetchall()
+            return {"subscribers": subs}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/debug/subscribe")
 async def debug_subscribe():
     """Debug endpoint to add initial subscriber"""
