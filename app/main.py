@@ -212,8 +212,9 @@ async def lifespan(app: FastAPI):
     feed_cache.clear()
 
 
-# Initialize FastAPI app
-app = FastAPI(title="SaskEdChat Feed")
+# Initialize FastAPI app with lifespan
+app = FastAPI(title="SaskEdChat Feed", lifespan=lifespan)
+
 
 # Add CORS middleware
 app.add_middleware(
