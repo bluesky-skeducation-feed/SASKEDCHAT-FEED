@@ -449,6 +449,17 @@ async def get_feed(
         logger.error(f"Feed error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/.well-known/did.json")
+async def did_json():
+    return {
+        "@context": ["https://www.w3.org/ns/did/v1"],
+        "id": "did:web:web-production-96221.up.railway.app",
+        "service": [{
+            "id": "#bsky_fg",
+            "type": "BskyFeedGenerator",
+            "serviceEndpoint": "https://web-production-96221.up.railway.app"
+        }]
+    }
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,4 +1,5 @@
-from atproto import Client, models
+from atproto import Client
+from datetime import datetime, UTC
 
 def create_feed_generator():
     # Initialize client and login
@@ -10,7 +11,7 @@ def create_feed_generator():
         'did': 'did:web:web-production-96221.up.railway.app',
         'displayName': 'SaskEdChat Feed',
         'description': 'A feed aggregating posts with Saskatchewan education-related hashtags',
-        'avatar': None,  # Optional: URL to avatar image
+        'createdAt': datetime.now(UTC).isoformat(),
         'labels': {
             '$type': 'com.atproto.label.defs#selfLabels',
             'values': [
