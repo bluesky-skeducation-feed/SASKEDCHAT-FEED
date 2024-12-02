@@ -1,9 +1,9 @@
 {
   "@context": ["https://www.w3.org/ns/did/v1"],
-  "id": "did:web-production-96221.up.railway.app",
+  "id": "did:web:web-production-96221.up.railway.app",
   "service": [{
-      "id": "#bsky_fg",
-      "type": "BskyFeedGenerator",
-      "serviceEndpoint": "https://web-production-96221.up.railway.app"
-    }]
+    "id": "#bsky_fg",
+    "type": "BskyFeedGenerator",
+    "serviceEndpoint": "https://web-production-96221.up.railway.app"
+  }]
 }
