@@ -1,7 +1,7 @@
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, field_validator
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Union
 import sqlite3
 from datetime import datetime, timedelta
 import os
@@ -206,6 +206,9 @@ class FeedResponse(BaseModel):
             "feed": [post.model_dump() for post in self.feed],
         }
 
+class FeedGeneratorView(BaseModel):
+    feed: List[dict]
+    cursor: Optional[str] = None
 
 # Initialize database and cache
 db = Database()
@@ -459,6 +462,58 @@ async def did_json():
             "type": "BskyFeedGenerator",
             "serviceEndpoint": "https://web-production-96221.up.railway.app"
         }]
+    }
+
+@app.get("/xrpc/app.bsky.feed.getFeedSkeleton")
+async def get_feed_skeleton(
+    feed: str,
+    cursor: Optional[str] = None,
+    limit: Optional[int] = 50,
+):
+    try:
+        with db.get_cursor() as cursor_db:
+            query = """
+                SELECT DISTINCT p.uri, p.cid, p.timestamp 
+                FROM posts p
+                INNER JOIN subscribers s ON p.author = s.did
+                WHERE p.text LIKE '%#SaskEdChat%'
+                ORDER BY p.timestamp DESC
+                LIMIT ?
+            """
+            
+            cursor_db.execute(query, [limit])
+            rows = cursor_db.fetchall()
+            
+            feed_items = [
+                {
+                    "post": row[0],  # uri
+                }
+                for row in rows
+            ]
+            
+            next_cursor = str(rows[-1][2]) if rows else None
+            
+            return {
+                "cursor": next_cursor,
+                "feed": feed_items
+            }
+            
+    except Exception as e:
+        logger.error(f"Feed error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/xrpc/app.bsky.feed.describeFeedGenerator")
+async def describe_feed_generator():
+    return {
+        "did": "did:web:web-production-96221.up.railway.app",
+        "feeds": [
+            {
+                "uri": "at://did:web:web-production-96221.up.railway.app/app.bsky.feed.generator/saskedchat",
+                "name": "saskedchat",
+                "displayName": "SaskEdChat Feed",
+                "description": "A feed aggregating posts with Saskatchewan education-related hashtags",
+            }
+        ]
     }
 
 if __name__ == "__main__":
