@@ -337,60 +337,50 @@ async def handle_subscription(subscription: Subscription):
 
 
 @app.post("/post")
-async def handle_post(post: Post):
+async def handle_post(post: Post, response: Response):
     try:
-        logger.info(f"Received post: {post.record.get('text', '')}")
-
+        logger.info("=== Starting Post Processing ===")
+        logger.info(f"Post URI: {post.uri}")
+        logger.info(f"Post Text: {post.record.get('text', '')}")
+        logger.info(f"Author DID: {post.author['did']}")
+        
         # Check if author is a subscriber first
         with db.get_cursor() as cursor:
+            logger.info("Checking subscriber status...")
             cursor.execute(
-                "SELECT did FROM subscribers WHERE did = ?", (post.author["did"],)
+                "SELECT did FROM subscribers WHERE did = ?", 
+                (post.author["did"],)
             )
-
             subscriber = cursor.fetchone()
-            logger.info(f"Subscriber check result: {subscriber}")
-
-            if not subscriber:
-                logger.info(f"User {post.author['did']} not subscribed")
-                return {
-                    "status": "skipped",
-                    "reason": "not subscribed",
-                    "user": post.author["did"],
-                }
+            logger.info(f"Subscriber found: {subscriber}")
 
             # Only check hashtags if user is a subscriber
-            post_text = post.record.get("text", "")
-            found_hashtags = [
-                tag for tag in MONITORED_HASHTAGS if tag.lower() in post_text.lower()
-            ]
+            post_text = post.record.get("text", "").lower()
+            logger.info(f"Checking text for hashtags: {post_text}")
+            
+            found_hashtags = [tag for tag in MONITORED_HASHTAGS if tag.lower() in post_text]
             logger.info(f"Found hashtags: {found_hashtags}")
 
-            if not found_hashtags:
-                logger.info("No monitored hashtags found")
-                return {
-                    "status": "skipped",
-                    "reason": "no monitored hashtags found",
-                    "monitored_hashtags": MONITORED_HASHTAGS,
-                }
-
-            # Store the post if both checks pass
-            cursor.execute(
-                """
-                INSERT OR REPLACE INTO posts (uri, cid, author, text, timestamp)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    post.uri,
-                    post.cid,
-                    post.author["did"],
-                    post_text,
-                    int(
-                        datetime.fromisoformat(post.record["createdAt"]).timestamp()
-                        * 1000
-                    ),
-                ),
-            )
-            logger.info("Post stored successfully")
+            if found_hashtags:
+                logger.info("Attempting to store post...")
+                try:
+                    cursor.execute(
+                        """
+                        INSERT OR REPLACE INTO posts (uri, cid, author, text, timestamp)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            post.uri,
+                            post.cid,
+                            post.author["did"],
+                            post_text,
+                            int(datetime.fromisoformat(post.record["createdAt"]).timestamp() * 1000),
+                        ),
+                    )
+                    logger.info("Post stored successfully")
+                except Exception as e:
+                    logger.error(f"Database error while storing post: {str(e)}")
+                    raise
 
         return {
             "status": "success",
@@ -399,9 +389,9 @@ async def handle_post(post: Post):
         }
 
     except Exception as e:
-        logger.error(f"Post error: {str(e)}")
+        logger.error(f"Post processing error: {str(e)}")
         logger.exception("Detailed error:")
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"status": "error", "detail": str(e)}
 
 
 @app.get("/feed", response_model=FeedResponse)
@@ -606,6 +596,37 @@ async def debug_subscribe():
     except Exception as e:
         return {"error": str(e)}
 
+
+@app.get("/debug/add-test-post")
+async def add_test_post():
+    """Debug endpoint to add a test post"""
+    try:
+        with db.get_cursor() as cursor:
+            test_post = {
+                "uri": "test_uri",
+                "cid": "test_cid",
+                "author": "did:web:web-production-96221.up.railway.app",
+                "text": "This is a test post #SaskEdChat",
+                "timestamp": int(datetime.now().timestamp() * 1000)
+            }
+            
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO posts (uri, cid, author, text, timestamp)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    test_post["uri"],
+                    test_post["cid"],
+                    test_post["author"],
+                    test_post["text"],
+                    test_post["timestamp"]
+                )
+            )
+            
+            return {"status": "success", "post": test_post}
+    except Exception as e:
+        return {"error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
