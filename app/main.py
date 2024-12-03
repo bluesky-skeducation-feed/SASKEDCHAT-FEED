@@ -477,60 +477,61 @@ async def get_feed_skeleton(
 ):
     try:
         logger.info(f"Feed request received - cursor: {cursor}, limit: {limit}")
-        
-        params = []
+
+        # Handle the case where limit is None
+        query_limit = limit if limit is not None else 30
+
         query = """
             SELECT DISTINCT p.uri, p.cid, p.timestamp 
             FROM posts p
             INNER JOIN subscribers s ON p.author = s.did
-            WHERE p.text LIKE '%#SaskEdChat%'
+            WHERE p.text LIKE ?
         """
-        
+
+        params = ["%#SaskEdChat%"]  # Start with the LIKE parameter
+
         if cursor:
             query += " AND p.timestamp < ?"
             params.append(int(cursor))
-        
+
         query += " ORDER BY p.timestamp DESC LIMIT ?"
-        params.append(limit if limit is not None else 30)
-        
-        logger.info(f"Executing query: {query} with params: {params}")
-        
+        params.append(query_limit)
+
+        logger.info(f"Executing query: {query}")
+        logger.info(f"Query parameters: {params}")
+
         with db.get_cursor() as cursor_db:
-            cursor_db.execute(query, params)
-            rows = cursor_db.fetchall()
-            
-            logger.info(f"Query returned {len(rows)} rows")
-            
-            # Handle empty results
+            try:
+                cursor_db.execute(query, params)
+                rows = cursor_db.fetchall()
+                logger.info(f"Retrieved {len(rows)} rows from database")
+            except Exception as db_error:
+                logger.error(f"Database error: {str(db_error)}")
+                return {"cursor": None, "feed": []}
+
             if not rows:
-                logger.info("No results found, returning empty feed")
-                return {
-                    "cursor": None,
-                    "feed": []
-                }
-            
+                logger.info("No posts found")
+                return {"cursor": None, "feed": []}
+
             feed_items = []
             for row in rows:
-                feed_items.append({
-                    "post": row[0],  # uri
-                    "reason": None   # Required by Bluesky's API
-                })
-            
+                feed_items.append(
+                    {
+                        "post": row[0],  # uri
+                    }
+                )
+
             next_cursor = str(rows[-1][2]) if rows else None
-            logger.info(f"Returning feed with {len(feed_items)} items and cursor: {next_cursor}")
-            
-            return {
-                "cursor": next_cursor,
-                "feed": feed_items
-            }
-            
+
+            response = {"cursor": next_cursor, "feed": feed_items}
+
+            logger.info(f"Returning response: {response}")
+            return response
+
     except Exception as e:
         logger.error(f"Feed error: {str(e)}")
         logger.exception("Detailed feed error:")
-        return {
-            "cursor": None,
-            "feed": []
-        }
+        return {"cursor": None, "feed": []}
 
 
 @app.get("/xrpc/app.bsky.feed.describeFeedGenerator")
