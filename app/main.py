@@ -379,79 +379,76 @@ async def handle_post(post: Post, response: Response):
         return {"status": "error", "detail": str(e)}
 
 
-@app.get("/feed", response_model=FeedResponse)
-async def get_feed(
-    limit: Optional[int] = 50,
-    page_cursor: Optional[str] = None,
-    bypass_cache: bool = False,
+@app.get("/xrpc/app.bsky.feed.getFeedSkeleton")
+async def get_feed_skeleton(
+    feed: str,
+    cursor: Optional[str] = None,
+    limit: Optional[int] = 30,
 ):
-    """Get the feed of SaskEdChat posts with caching"""
-    logger.debug(f"Feed request received - limit: {limit}, page_cursor: {page_cursor}")
-
-    cache_key = f"feed:limit={limit}:cursor={page_cursor}"
-
-    # Only check cache if not bypassing
-    if not bypass_cache:
-        cached_response = feed_cache.get(cache_key)
-        if cached_response:
-            logger.debug("Returning cached response")
-            return cached_response
-
     try:
-        with db.get_cursor() as cursor:
-            query = """
-                SELECT DISTINCT p.* 
-                FROM posts p
-                INNER JOIN subscribers s ON p.author = s.did
-                WHERE p.text LIKE '%#SaskEdChat%'
-            """
-
-            params = []
-            if page_cursor:
-                query += " AND p.timestamp < ?"
-                params.append(int(page_cursor))
-
-            query += " ORDER BY p.timestamp DESC LIMIT ?"
+        logger.info(f"Feed request received - cursor: {cursor}, limit: {limit}")
+        
+        # Start with base query
+        query = """
+            SELECT DISTINCT p.uri, p.cid, p.timestamp 
+            FROM posts p
+            INNER JOIN subscribers s ON p.author = s.did
+            WHERE p.text LIKE '%#SaskEdChat%'
+        """
+        
+        params = []
+        
+        # Add cursor condition if present
+        if cursor:
+            query += " AND p.timestamp < ? "
+            params.append(int(cursor))
+        
+        # Add ordering and limit
+        query += " ORDER BY p.timestamp DESC "
+        
+        # Add limit parameter
+        if limit is not None:
+            query += " LIMIT ? "
             params.append(limit)
-
-            logger.debug(f"Executing query: {query}")
-
-            cursor.execute(query, params)
-            rows = cursor.fetchall()
-
+        else:
+            query += " LIMIT 30 "
+        
+        logger.info(f"Executing query: {query}")
+        logger.info(f"Query parameters: {params}")
+        
+        with db.get_cursor() as cursor_db:
+            try:
+                cursor_db.execute(query, params)
+                rows = cursor_db.fetchall()
+                logger.info(f"Retrieved {len(rows)} rows from database")
+            except Exception as db_error:
+                logger.error(f"Database error: {str(db_error)}")
+                return {"cursor": None, "feed": []}
+            
             if not rows:
-                return FeedResponse(cursor=None, feed=[])
-
-            feed = []
+                logger.info("No posts found")
+                return {"cursor": None, "feed": []}
+            
+            feed_items = []
             for row in rows:
-                feed.append(
-                    FeedPost(
-                        post={
-                            "uri": row[0],
-                            "cid": row[1],
-                            "author": row[2],
-                            "record": {
-                                "text": row[3],
-                                "createdAt": datetime.fromtimestamp(
-                                    row[4] / 1000
-                                ).isoformat(),
-                            },
-                        }
-                    )
-                )
-
-            next_cursor = str(rows[-1][4]) if rows else None
-            response = FeedResponse(cursor=next_cursor, feed=feed)
-
-            # Only cache if not bypassing
-            if not bypass_cache:
-                feed_cache.set(cache_key, response.model_dump())
-
+                feed_items.append({
+                    "post": row[0]  # uri
+                })
+            
+            next_cursor = str(rows[-1][2]) if rows else None
+            
+            response = {
+                "cursor": next_cursor,
+                "feed": feed_items
+            }
+            
+            logger.info(f"Returning response: {response}")
             return response
-
+            
     except Exception as e:
         logger.error(f"Feed error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Detailed feed error:")
+        return {"cursor": None, "feed": []}
 
 
 @app.get("/.well-known/did.json")
