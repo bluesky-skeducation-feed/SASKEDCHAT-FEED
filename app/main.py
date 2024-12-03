@@ -79,15 +79,12 @@ class FeedCache:
 # Optimized Database Class
 class Database:
     def __init__(self):
-        db_url = os.getenv('DATABASE_URL')
+        db_url = os.getenv("DATABASE_URL")
         if not db_url:
             raise ValueError("DATABASE_URL environment variable is not set")
-        self.connection = psycopg2.connect(
-            db_url,
-            sslmode='require'
-        )
+        self.connection = psycopg2.connect(db_url, sslmode="require")
         self._init_db()
-        
+
         def __del__(self):
             if hasattr(self, "connection") and self.connection:
                 self.connection.close()
@@ -105,19 +102,21 @@ class Database:
         finally:
             cursor.close()
 
-
     def _init_db(self):
         with self.get_cursor() as cursor:
             # Create tables
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS subscribers (
                     did TEXT PRIMARY KEY,
                     handle TEXT,
                     timestamp BIGINT
                 )
-            """)
+            """
+            )
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS posts (
                     uri TEXT PRIMARY KEY,
                     cid TEXT,
@@ -125,15 +124,16 @@ class Database:
                     text TEXT,
                     timestamp BIGINT
                 )
-            """)
+            """
+            )
 
             # Create indexes
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_posts_timestamp 
                 ON posts(timestamp DESC)
-            """)
-
-    
+            """
+            )
 
 
 # Pydantic models
@@ -322,13 +322,12 @@ async def handle_post(post: Post, response: Response):
         logger.info(f"Post URI: {post.uri}")
         logger.info(f"Post Text: {post.record.get('text', '')}")
         logger.info(f"Author DID: {post.author['did']}")
-        
+
         # Check if author is a subscriber first
         with db.get_cursor() as cursor:
             logger.info("Checking subscriber status...")
             cursor.execute(
-                "SELECT did FROM subscribers WHERE did = ?", 
-                (post.author["did"],)
+                "SELECT did FROM subscribers WHERE did = ?", (post.author["did"],)
             )
             subscriber = cursor.fetchone()
             logger.info(f"Subscriber found: {subscriber}")
@@ -336,8 +335,10 @@ async def handle_post(post: Post, response: Response):
             # Only check hashtags if user is a subscriber
             post_text = post.record.get("text", "").lower()
             logger.info(f"Checking text for hashtags: {post_text}")
-            
-            found_hashtags = [tag for tag in MONITORED_HASHTAGS if tag.lower() in post_text]
+
+            found_hashtags = [
+                tag for tag in MONITORED_HASHTAGS if tag.lower() in post_text
+            ]
             logger.info(f"Found hashtags: {found_hashtags}")
 
             if found_hashtags:
@@ -353,7 +354,12 @@ async def handle_post(post: Post, response: Response):
                             post.cid,
                             post.author["did"],
                             post_text,
-                            int(datetime.fromisoformat(post.record["createdAt"]).timestamp() * 1000),
+                            int(
+                                datetime.fromisoformat(
+                                    post.record["createdAt"]
+                                ).timestamp()
+                                * 1000
+                            ),
                         ),
                     )
                     logger.info("Post stored successfully")
@@ -453,11 +459,13 @@ async def did_json():
     return {
         "@context": ["https://www.w3.org/ns/did/v1"],
         "id": "did:web:web-production-6afef.up.railway.app",
-        "service": [{
-            "id": "#bsky_fg",
-            "type": "BskyFeedGenerator",
-            "serviceEndpoint": "https://web-production-6afef.up.railway.app"
-        }]
+        "service": [
+            {
+                "id": "#bsky_fg",
+                "type": "BskyFeedGenerator",
+                "serviceEndpoint": "https://web-production-6afef.up.railway.app",
+            }
+        ],
     }
 
 
@@ -481,6 +489,10 @@ async def get_feed_skeleton(
             cursor_db.execute(query, [limit])
             rows = cursor_db.fetchall()
 
+            # Handle empty results
+            if not rows:
+                return {"cursor": None, "feed": []}
+
             feed_items = [
                 {
                     "post": row[0],  # uri
@@ -488,12 +500,14 @@ async def get_feed_skeleton(
                 for row in rows
             ]
 
+            # Only set next_cursor if we have results
             next_cursor = str(rows[-1][2]) if rows else None
 
             return {"cursor": next_cursor, "feed": feed_items}
 
     except Exception as e:
         logger.error(f"Feed error: {str(e)}")
+        logger.exception("Detailed feed error:")  # This will log the full stack trace
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -508,7 +522,7 @@ async def describe_feed_generator():
                 "displayName": "SaskEdChat Feed",
                 "description": "A feed aggregating posts with Saskatchewan education-related hashtags",
             }
-        ]
+        ],
     }
 
 
@@ -567,7 +581,7 @@ async def debug_subscribe():
                     "did:web:web-production-96221.up.railway.app",
                     "sask-ed-feed.bsky.social",
                     int(datetime.now().timestamp() * 1000),
-                )
+                ),
             )
             return {"status": "success", "message": "Added initial subscriber"}
     except Exception as e:
@@ -584,9 +598,9 @@ async def add_test_post():
                 "cid": "test_cid",
                 "author": "did:web:web-production-96221.up.railway.app",
                 "text": "This is a test post #SaskEdChat",
-                "timestamp": int(datetime.now().timestamp() * 1000)
+                "timestamp": int(datetime.now().timestamp() * 1000),
             }
-            
+
             cursor.execute(
                 """
                 INSERT OR REPLACE INTO posts (uri, cid, author, text, timestamp)
@@ -597,13 +611,14 @@ async def add_test_post():
                     test_post["cid"],
                     test_post["author"],
                     test_post["text"],
-                    test_post["timestamp"]
-                )
+                    test_post["timestamp"],
+                ),
             )
-            
+
             return {"status": "success", "post": test_post}
     except Exception as e:
         return {"error": str(e)}
+
 
 if __name__ == "__main__":
     import uvicorn
