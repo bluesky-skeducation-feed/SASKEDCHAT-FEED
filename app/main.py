@@ -9,7 +9,6 @@ from atproto import Client
 import logging
 from pathlib import Path
 from contextlib import contextmanager, asynccontextmanager  # For @contextmanager
-import psycopg2
 from psycopg2 import pool, errors, extensions
 from psycopg2.extras import DictCursor
 
