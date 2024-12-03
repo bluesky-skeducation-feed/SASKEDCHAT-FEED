@@ -329,7 +329,7 @@ async def get_feed_skeleton(
 ):
     try:
         logger.info(f"Feed request received - cursor: {cursor}, limit: {limit}")
-        
+
         # Start with base query and parameters
         query = """
             SELECT DISTINCT p.uri, p.cid, p.timestamp 
@@ -337,21 +337,21 @@ async def get_feed_skeleton(
             INNER JOIN subscribers s ON p.author = s.did
             WHERE p.text ILIKE %(hashtag)s
         """
-        
-        params = {'hashtag': '%#SaskEdChat%'}
-        
+
+        params = {"hashtag": "%#SaskEdChat%"}
+
         # Add cursor condition if present
         if cursor:
             query += " AND p.timestamp < %(cursor)s "
-            params['cursor'] = int(cursor)
-        
+            params["cursor"] = int(cursor)
+
         # Add ordering and limit
         query += " ORDER BY p.timestamp DESC LIMIT %(limit)s"
-        params['limit'] = limit if limit is not None else 30
-        
+        params["limit"] = limit if limit is not None else 30
+
         logger.info(f"Executing query: {query}")
         logger.info(f"Query parameters: {params}")
-        
+
         with db.get_cursor() as cursor_db:
             try:
                 cursor_db.execute(query, params)
@@ -360,31 +360,27 @@ async def get_feed_skeleton(
             except Exception as db_error:
                 logger.error(f"Database error: {str(db_error)}")
                 return {"cursor": None, "feed": []}
-            
+
             if not rows:
                 logger.info("No posts found")
                 return {"cursor": None, "feed": []}
-            
+
             feed_items = []
             for row in rows:
-                feed_items.append({
-                    "post": row[0]  # uri
-                })
-            
+                feed_items.append({"post": row[0]})  # uri
+
             next_cursor = str(rows[-1][2]) if rows else None
-            
-            response = {
-                "cursor": next_cursor,
-                "feed": feed_items
-            }
-            
+
+            response = {"cursor": next_cursor, "feed": feed_items}
+
             logger.info(f"Returning response: {response}")
             return response
-            
+
     except Exception as e:
         logger.error(f"Feed error: {str(e)}")
         logger.exception("Detailed feed error:")
         return {"cursor": None, "feed": []}
+
 
 # Main Functionality
 @app.post("/subscription")
@@ -402,11 +398,18 @@ async def handle_subscription(subscription: Subscription):
                     timestamp = EXCLUDED.timestamp
                 """,
                 {
-                    'did': subscription.subject.did,
-                    'handle': subscription.service.handle,
-                    'timestamp': int(created_at.timestamp() * 1000),
+                    "did": subscription.subject.did,
+                    "handle": subscription.service.handle,
+                    "timestamp": int(created_at.timestamp() * 1000),
                 },
             )
+        return {"status": "success"}
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.error(f"Subscription error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/post")
 async def handle_post(post: Post, response: Response):
@@ -535,14 +538,15 @@ async def debug_subscribe():
                     timestamp = EXCLUDED.timestamp
                 """,
                 {
-                    'did': "did:web:web-production-6afef.up.railway.app",
-                    'handle': "sask-ed-feed.bsky.social",
-                    'timestamp': int(datetime.now().timestamp() * 1000),
+                    "did": "did:web:web-production-6afef.up.railway.app",
+                    "handle": "sask-ed-feed.bsky.social",
+                    "timestamp": int(datetime.now().timestamp() * 1000),
                 },
             )
             return {"status": "success", "message": "Added initial subscriber"}
     except Exception as e:
         return {"error": str(e)}
+
 
 @app.get("/debug/add-test-post")
 async def add_test_post():
@@ -567,7 +571,7 @@ async def add_test_post():
                     text = EXCLUDED.text,
                     timestamp = EXCLUDED.timestamp
                 """,
-                test_post
+                test_post,
             )
 
             return {"status": "success", "post": test_post}
