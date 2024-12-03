@@ -353,14 +353,20 @@ async def did_json():
 # Feed Generator Endpoints
 @app.get("/xrpc/app.bsky.feed.describeFeedGenerator")
 async def describe_feed_generator():
+    feed_uri = (
+        "at://did:plc:yhebq6pwmyhlhdyhosu7jpmi/app.bsky.feed.generator/saskedchat"
+    )
+
     return {
-        "did": "did:plc:yhebq6pwmyhlhdyhosu7jpmi",  # Updated to match your assigned DID
+        "did": "did:plc:yhebq6pwmyhlhdyhosu7jpmi",
         "feeds": [
             {
-                "uri": "at://did:plc:yhebq6pwmyhlhdyhosu7jpmi/app.bsky.feed.generator/saskedchat",
+                "uri": feed_uri,
+                "cid": "bafyreid27zk7lbis4zw5fz4podbvhs4rrhdzw2fv47x4jweqbwixr2urm4",  # Add CID here
                 "name": "saskedchat",
                 "displayName": "SaskEdChat Feed",
                 "description": "A feed aggregating posts with Saskatchewan education-related hashtags",
+                "avatar": None,  # Optional avatar URL
             }
         ],
     }
