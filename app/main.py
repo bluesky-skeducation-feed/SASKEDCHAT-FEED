@@ -477,37 +477,52 @@ async def get_feed_skeleton(
 ):
     try:
         with db.get_cursor() as cursor_db:
+            params = []
             query = """
                 SELECT DISTINCT p.uri, p.cid, p.timestamp 
                 FROM posts p
                 INNER JOIN subscribers s ON p.author = s.did
                 WHERE p.text LIKE '%#SaskEdChat%'
-                ORDER BY p.timestamp DESC
-                LIMIT ?
             """
-
-            cursor_db.execute(query, [limit])
+            
+            if cursor:
+                query += " AND p.timestamp < ?"
+                params.append(int(cursor))
+            
+            query += " ORDER BY p.timestamp DESC"
+            
+            if limit:
+                query += " LIMIT ?"
+                params.append(int(limit))
+            
+            cursor_db.execute(query, params)
             rows = cursor_db.fetchall()
-
+            
             # Handle empty results
             if not rows:
-                return {"cursor": None, "feed": []}
-
+                return {
+                    "cursor": None,
+                    "feed": []
+                }
+            
             feed_items = [
                 {
                     "post": row[0],  # uri
                 }
                 for row in rows
             ]
-
+            
             # Only set next_cursor if we have results
             next_cursor = str(rows[-1][2]) if rows else None
-
-            return {"cursor": next_cursor, "feed": feed_items}
-
+            
+            return {
+                "cursor": next_cursor,
+                "feed": feed_items
+            }
+            
     except Exception as e:
         logger.error(f"Feed error: {str(e)}")
-        logger.exception("Detailed feed error:")  # This will log the full stack trace
+        logger.exception("Detailed feed error:")
         raise HTTPException(status_code=500, detail=str(e))
 
 
