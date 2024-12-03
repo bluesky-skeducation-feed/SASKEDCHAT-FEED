@@ -400,9 +400,6 @@ async def get_feed_skeleton(
         query += " ORDER BY p.timestamp DESC LIMIT %(limit)s"
         params["limit"] = limit if limit is not None else 30
 
-        logger.info(f"Executing query: {query}")
-        logger.info(f"Query parameters: {params}")
-
         with db.get_cursor() as cursor_db:
             try:
                 cursor_db.execute(query, params)
@@ -419,24 +416,32 @@ async def get_feed_skeleton(
             feed_items = []
             for row in rows:
                 post_uri = row[0]
-                # Validate URI format
+                # Log the full row data for debugging
+                logger.info(f"Processing row: {row}")
+                
                 if not post_uri.startswith("at://"):
                     post_uri = f"at://{post_uri}" if not post_uri.startswith("at:/") else post_uri
                 
-                feed_items.append({"post": post_uri})
-                logger.info(f"Added post to feed: {post_uri}")  # Log each URI
+                feed_items.append({
+                    "post": post_uri
+                })
 
             next_cursor = str(rows[-1][2]) if rows else None
             
-            result = {"feed": feed_items, "cursor": next_cursor}
-            logger.info(f"Final feed response: {result}")  # Log complete response
+            # Ensure the response exactly matches Bluesky's expected format
+            result = {
+                "cursor": next_cursor,
+                "feed": feed_items
+            }
+            
+            # Log the exact response for debugging
+            logger.info(f"Final feed response: {result}")
             return result
 
     except Exception as e:
         logger.error(f"Feed error: {str(e)}")
         logger.exception("Detailed feed error:")
         raise HTTPException(status_code=500, detail=str(e))
-
 # Main Functionality
 @app.post("/subscription")
 async def handle_subscription(subscription: Subscription):
@@ -616,9 +621,11 @@ async def add_test_post():
             # Generate a proper Bluesky post URI
             timestamp = int(datetime.now().timestamp() * 1000)
             rkey = f"{timestamp:x}"  # Convert timestamp to hex for rkey
+            
+            # Use a valid CID format (example format)
             test_post = {
                 "uri": f"at://did:plc:yhebq6pwmyhlhdyhosu7jpmi/app.bsky.feed.post/{rkey}",
-                "cid": "test_cid",
+                "cid": "bafyreid27zk7lbis4zw5fz4podbvhs4rrhdzw2fv47x4jweqbwixr2urm4",  # Valid CID format
                 "author": "did:plc:yhebq6pwmyhlhdyhosu7jpmi",
                 "text": "This is a test post #SaskEdChat",
                 "timestamp": timestamp,
@@ -637,12 +644,11 @@ async def add_test_post():
                 test_post,
             )
             
-            logger.info(f"Created test post with URI: {test_post['uri']}")
+            logger.info(f"Created test post with URI: {test_post['uri']} and CID: {test_post['cid']}")
             return {"status": "success", "post": test_post}
     except Exception as e:
         logger.error(f"Error creating test post: {str(e)}")
         return {"error": str(e)}
-
 if __name__ == "__main__":
     import uvicorn
 
