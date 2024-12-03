@@ -18,7 +18,7 @@ extensions.set_wait_callback(None)
 MONITORED_HASHTAGS = [
     "#SaskEdChat",
     "#sked",
-    "#SaskTEachers",
+    "#SaskTeachers",
     "#SKTeachers",
     "#SaskEAs",
     "#SaskEd",
