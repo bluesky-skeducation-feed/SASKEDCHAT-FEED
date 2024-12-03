@@ -85,9 +85,9 @@ class Database:
         self.connection = psycopg2.connect(db_url, sslmode="require")
         self._init_db()
 
-        def __del__(self):
-            if hasattr(self, "connection") and self.connection:
-                self.connection.close()
+    def __del__(self):
+        if hasattr(self, "connection") and self.connection:
+            self.connection.close()
 
     @contextmanager
     def get_cursor(self):
@@ -329,32 +329,29 @@ async def get_feed_skeleton(
 ):
     try:
         logger.info(f"Feed request received - cursor: {cursor}, limit: {limit}")
-
-        # Start with base query
+        
+        # Start with base query and parameters
         query = """
             SELECT DISTINCT p.uri, p.cid, p.timestamp 
             FROM posts p
             INNER JOIN subscribers s ON p.author = s.did
-            WHERE p.text ILIKE $1
+            WHERE p.text ILIKE %(hashtag)s
         """
-
-        params = ["%#SaskEdChat%"]
-        param_count = 1
-
+        
+        params = {'hashtag': '%#SaskEdChat%'}
+        
         # Add cursor condition if present
         if cursor:
-            param_count += 1
-            query += f" AND p.timestamp < ${param_count} "
-            params.append(int(cursor))
-
+            query += " AND p.timestamp < %(cursor)s "
+            params['cursor'] = int(cursor)
+        
         # Add ordering and limit
-        param_count += 1
-        query += f" ORDER BY p.timestamp DESC LIMIT ${param_count}"
-        params.append(limit if limit is not None else 30)
-
+        query += " ORDER BY p.timestamp DESC LIMIT %(limit)s"
+        params['limit'] = limit if limit is not None else 30
+        
         logger.info(f"Executing query: {query}")
         logger.info(f"Query parameters: {params}")
-
+        
         with db.get_cursor() as cursor_db:
             try:
                 cursor_db.execute(query, params)
@@ -363,32 +360,35 @@ async def get_feed_skeleton(
             except Exception as db_error:
                 logger.error(f"Database error: {str(db_error)}")
                 return {"cursor": None, "feed": []}
-
+            
             if not rows:
                 logger.info("No posts found")
                 return {"cursor": None, "feed": []}
-
+            
             feed_items = []
             for row in rows:
-                feed_items.append({"post": row[0]})  # uri
-
+                feed_items.append({
+                    "post": row[0]  # uri
+                })
+            
             next_cursor = str(rows[-1][2]) if rows else None
-
-            response = {"cursor": next_cursor, "feed": feed_items}
-
+            
+            response = {
+                "cursor": next_cursor,
+                "feed": feed_items
+            }
+            
             logger.info(f"Returning response: {response}")
             return response
-
+            
     except Exception as e:
         logger.error(f"Feed error: {str(e)}")
         logger.exception("Detailed feed error:")
         return {"cursor": None, "feed": []}
 
-
 # Main Functionality
 @app.post("/subscription")
 async def handle_subscription(subscription: Subscription):
-    """Handle new subscription requests"""
     try:
         created_at = datetime.fromisoformat(subscription.createdAt)
 
@@ -396,24 +396,17 @@ async def handle_subscription(subscription: Subscription):
             cursor.execute(
                 """
                 INSERT INTO subscribers (did, handle, timestamp)
-                VALUES ($1, $2, $3)
+                VALUES (%(did)s, %(handle)s, %(timestamp)s)
                 ON CONFLICT (did) DO UPDATE SET
                     handle = EXCLUDED.handle,
                     timestamp = EXCLUDED.timestamp
                 """,
-                (
-                    subscription.subject.did,
-                    subscription.service.handle,
-                    int(created_at.timestamp() * 1000),
-                ),
+                {
+                    'did': subscription.subject.did,
+                    'handle': subscription.service.handle,
+                    'timestamp': int(created_at.timestamp() * 1000),
+                },
             )
-        return {"status": "success"}
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-    except Exception as e:
-        logger.error(f"Subscription error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/post")
 async def handle_post(post: Post, response: Response):
@@ -536,21 +529,20 @@ async def debug_subscribe():
             cursor.execute(
                 """
                 INSERT INTO subscribers (did, handle, timestamp)
-                VALUES ($1, $2, $3)
+                VALUES (%(did)s, %(handle)s, %(timestamp)s)
                 ON CONFLICT (did) DO UPDATE SET
                     handle = EXCLUDED.handle,
                     timestamp = EXCLUDED.timestamp
                 """,
-                (
-                    "did:web:web-production-96221.up.railway.app",
-                    "sask-ed-feed.bsky.social",
-                    int(datetime.now().timestamp() * 1000),
-                ),
+                {
+                    'did': "did:web:web-production-6afef.up.railway.app",
+                    'handle': "sask-ed-feed.bsky.social",
+                    'timestamp': int(datetime.now().timestamp() * 1000),
+                },
             )
             return {"status": "success", "message": "Added initial subscriber"}
     except Exception as e:
         return {"error": str(e)}
-
 
 @app.get("/debug/add-test-post")
 async def add_test_post():
@@ -560,7 +552,7 @@ async def add_test_post():
             test_post = {
                 "uri": "test_uri",
                 "cid": "test_cid",
-                "author": "did:web:web-production-96221.up.railway.app",
+                "author": "did:web:web-production-6afef.up.railway.app",
                 "text": "This is a test post #SaskEdChat",
                 "timestamp": int(datetime.now().timestamp() * 1000),
             }
@@ -568,20 +560,14 @@ async def add_test_post():
             cursor.execute(
                 """
                 INSERT INTO posts (uri, cid, author, text, timestamp)
-                VALUES ($1, $2, $3, $4, $5)
+                VALUES (%(uri)s, %(cid)s, %(author)s, %(text)s, %(timestamp)s)
                 ON CONFLICT (uri) DO UPDATE SET
                     cid = EXCLUDED.cid,
                     author = EXCLUDED.author,
                     text = EXCLUDED.text,
                     timestamp = EXCLUDED.timestamp
                 """,
-                (
-                    test_post["uri"],
-                    test_post["cid"],
-                    test_post["author"],
-                    test_post["text"],
-                    test_post["timestamp"],
-                ),
+                test_post
             )
 
             return {"status": "success", "post": test_post}
