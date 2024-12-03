@@ -473,7 +473,7 @@ async def did_json():
 async def get_feed_skeleton(
     feed: str,
     cursor: Optional[str] = None,
-    limit: Optional[int] = 30,  # Default to 30 as that's what Bluesky is requesting
+    limit: Optional[int] = 30,
 ):
     try:
         logger.info(f"Feed request received - cursor: {cursor}, limit: {limit}")
@@ -491,7 +491,7 @@ async def get_feed_skeleton(
             params.append(int(cursor))
         
         query += " ORDER BY p.timestamp DESC LIMIT ?"
-        params.append(limit if limit is not None else 30)  # Ensure we always have at least one parameter
+        params.append(limit if limit is not None else 30)
         
         logger.info(f"Executing query: {query} with params: {params}")
         
@@ -509,12 +509,12 @@ async def get_feed_skeleton(
                     "feed": []
                 }
             
-            feed_items = [
-                {
+            feed_items = []
+            for row in rows:
+                feed_items.append({
                     "post": row[0],  # uri
-                }
-                for row in rows
-            ]
+                    "reason": None   # Required by Bluesky's API
+                })
             
             next_cursor = str(rows[-1][2]) if rows else None
             logger.info(f"Returning feed with {len(feed_items)} items and cursor: {next_cursor}")
@@ -530,7 +530,7 @@ async def get_feed_skeleton(
         return {
             "cursor": None,
             "feed": []
-        }  # Return empty feed instead of throwing 500 error
+        }
 
 
 @app.get("/xrpc/app.bsky.feed.describeFeedGenerator")
