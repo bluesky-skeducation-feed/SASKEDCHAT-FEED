@@ -373,10 +373,6 @@ async def get_feed_skeleton(
     limit: Optional[int] = 30,
 ):
     try:
-        cache_key = f"feed_{cursor}_{limit}"
-        cached_result = feed_cache.get(cache_key)
-        if cached_result:
-            return cached_result
         logger.info(f"Feed request received - cursor: {cursor}, limit: {limit}")
 
         # Build ILIKE conditions for all hashtags
@@ -423,25 +419,23 @@ async def get_feed_skeleton(
             feed_items = []
             for row in rows:
                 post_uri = row[0]
-                feed_items.append(
-                    {
-                        "post": post_uri,
-                    }
-                )
+                # Validate URI format
+                if not post_uri.startswith("at://"):
+                    post_uri = f"at://{post_uri}" if not post_uri.startswith("at:/") else post_uri
+                
+                feed_items.append({"post": post_uri})
+                logger.info(f"Added post to feed: {post_uri}")  # Log each URI
 
             next_cursor = str(rows[-1][2]) if rows else None
-
-            result = {"feed": feed_items, "cursor": next_cursor}
             
-            # Cache the result before returning
-            feed_cache.set(cache_key, result)
+            result = {"feed": feed_items, "cursor": next_cursor}
+            logger.info(f"Final feed response: {result}")  # Log complete response
             return result
 
     except Exception as e:
         logger.error(f"Feed error: {str(e)}")
         logger.exception("Detailed feed error:")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # Main Functionality
 @app.post("/subscription")
@@ -619,12 +613,15 @@ async def add_test_post():
     """Debug endpoint to add a test post"""
     try:
         with db.get_cursor() as cursor:
+            # Generate a proper Bluesky post URI
+            timestamp = int(datetime.now().timestamp() * 1000)
+            rkey = f"{timestamp:x}"  # Convert timestamp to hex for rkey
             test_post = {
-                "uri": f"at://did:plc:yhebq6pwmyhlhdyhosu7jpmi/app.bsky.feed.post/{datetime.now().timestamp()}",
+                "uri": f"at://did:plc:yhebq6pwmyhlhdyhosu7jpmi/app.bsky.feed.post/{rkey}",
                 "cid": "test_cid",
-                "author": "did:plc:yhebq6pwmyhlhdyhosu7jpmi",  # Updated DID
+                "author": "did:plc:yhebq6pwmyhlhdyhosu7jpmi",
                 "text": "This is a test post #SaskEdChat",
-                "timestamp": int(datetime.now().timestamp() * 1000),
+                "timestamp": timestamp,
             }
 
             cursor.execute(
@@ -639,11 +636,12 @@ async def add_test_post():
                 """,
                 test_post,
             )
-
+            
+            logger.info(f"Created test post with URI: {test_post['uri']}")
             return {"status": "success", "post": test_post}
     except Exception as e:
+        logger.error(f"Error creating test post: {str(e)}")
         return {"error": str(e)}
-
 
 if __name__ == "__main__":
     import uvicorn
