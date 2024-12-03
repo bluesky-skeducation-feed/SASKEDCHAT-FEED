@@ -10,7 +10,11 @@ import logging
 from pathlib import Path
 from contextlib import contextmanager, asynccontextmanager  # For @contextmanager
 import psycopg2
+from psycopg2 import pool, errors, extensions
 from psycopg2.extras import DictCursor
+
+
+extensions.set_wait_callback(None)
 
 MONITORED_HASHTAGS = [
     "#SaskEdChat",
@@ -76,64 +80,96 @@ class FeedCache:
         self._timestamps.clear()
 
 
-# Optimized Database Class
 class Database:
     def __init__(self):
-        db_url = os.getenv("DATABASE_URL")
-        if not db_url:
-            raise ValueError("DATABASE_URL environment variable is not set")
-        self.connection = psycopg2.connect(db_url, sslmode="require")
-        self._init_db()
+        try:
+            db_url = os.getenv("DATABASE_URL")
+            if not db_url:
+                raise ValueError("DATABASE_URL environment variable is not set")
+            self.pool = pool.SimpleConnectionPool(
+                minconn=1, maxconn=10, dsn=db_url, sslmode="require"
+            )
+            self._init_db()  # Call _init_db after initializing pool
+        except Exception as e:
+            logger.error(f"Failed to initialize database pool: {str(e)}")
+            raise
 
     def __del__(self):
-        if hasattr(self, "connection") and self.connection:
-            self.connection.close()
+        if hasattr(self, "pool"):
+            self.pool.closeall()
 
     @contextmanager
     def get_cursor(self):
-        """Context manager for database cursor"""
-        cursor = self.connection.cursor()
+        """Context manager for database cursor with error handling"""
+        conn = self.pool.getconn()
         try:
+            cursor = conn.cursor(cursor_factory=DictCursor)
             yield cursor
-            self.connection.commit()
-        except Exception:
-            self.connection.rollback()
-            raise
+            conn.commit()
+        except errors.UniqueViolation as e:
+            conn.rollback()
+            logger.error(f"Unique constraint violation: {str(e)}")
+            raise HTTPException(status_code=409, detail="Resource already exists")
+        except errors.ForeignKeyViolation as e:
+            conn.rollback()
+            logger.error(f"Foreign key violation: {str(e)}")
+            raise HTTPException(status_code=400, detail="Invalid reference")
+        except errors.OperationalError as e:
+            conn.rollback()
+            logger.error(f"Database operational error: {str(e)}")
+            raise HTTPException(status_code=503, detail="Database unavailable")
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Unexpected database error: {str(e)}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         finally:
             cursor.close()
+            self.pool.putconn(conn)
 
     def _init_db(self):
+        """Initialize database tables with error handling"""
         with self.get_cursor() as cursor:
-            # Create tables
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS subscribers (
-                    did TEXT PRIMARY KEY,
-                    handle TEXT,
-                    timestamp BIGINT
+            try:
+                # Create tables
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS subscribers (
+                        did TEXT PRIMARY KEY,
+                        handle TEXT,
+                        timestamp BIGINT
+                    )
+                    """
                 )
-            """
-            )
 
-            cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS posts (
-                    uri TEXT PRIMARY KEY,
-                    cid TEXT,
-                    author TEXT,
-                    text TEXT,
-                    timestamp BIGINT
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS posts (
+                        uri TEXT PRIMARY KEY,
+                        cid TEXT,
+                        author TEXT,
+                        text TEXT,
+                        timestamp BIGINT
+                    )
+                    """
                 )
-            """
-            )
 
-            # Create indexes
-            cursor.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_posts_timestamp 
-                ON posts(timestamp DESC)
-            """
-            )
+                # Create indexes
+                cursor.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_posts_timestamp 
+                    ON posts(timestamp DESC)
+                    """
+                )
+
+                cursor.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_posts_author 
+                    ON posts(author)
+                    """
+                )
+            except Exception as e:
+                logger.error(f"Failed to initialize database tables: {str(e)}")
+                raise
 
 
 # Pydantic models
@@ -244,10 +280,17 @@ def init_bluesky_client():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    try:
+        with db.get_cursor() as cursor:
+            cursor.execute("SELECT 1")
+        logger.info("Database connection verified at startup")
+    except Exception as e:
+        logger.error(f"Failed to verify database connection: {str(e)}")
+        raise
     yield
     # Shutdown: cleanup connections
-    if hasattr(db, "connection") and db.connection:
-        db.connection.close()
+    if hasattr(db, "pool"):
+        db.pool.closeall()
     feed_cache.clear()
 
 
@@ -294,7 +337,10 @@ async def healthcheck(request: Request):
 async def did_json():
     return {
         "@context": ["https://www.w3.org/ns/did/v1"],
-        "id": "did:web:web-production-6afef.up.railway.app",
+        "id": "did:plc:yhebq6pwmyhlhdyhosu7jpmi",
+        "alsoKnownAs": [],
+        "authentication": [],
+        "verificationMethod": [],
         "service": [
             {
                 "id": "#bsky_fg",
@@ -309,10 +355,10 @@ async def did_json():
 @app.get("/xrpc/app.bsky.feed.describeFeedGenerator")
 async def describe_feed_generator():
     return {
-        "did": "did:web:web-production-6afef.up.railway.app",
+        "did": "did:plc:yhebq6pwmyhlhdyhosu7jpmi",  # Updated to match your assigned DID
         "feeds": [
             {
-                "uri": "at://did:web:web-production-6afef.up.railway.app/app.bsky.feed.generator/saskedchat",
+                "uri": "at://did:plc:yhebq6pwmyhlhdyhosu7jpmi/app.bsky.feed.generator/saskedchat",
                 "name": "saskedchat",
                 "displayName": "SaskEdChat Feed",
                 "description": "A feed aggregating posts with Saskatchewan education-related hashtags",
@@ -328,21 +374,31 @@ async def get_feed_skeleton(
     limit: Optional[int] = 30,
 ):
     try:
+        cache_key = f"feed_{cursor}_{limit}"
+        cached_result = feed_cache.get(cache_key)
+        if cached_result:
+            return cached_result
         logger.info(f"Feed request received - cursor: {cursor}, limit: {limit}")
 
+        # Build ILIKE conditions for all hashtags
+        hashtag_conditions = " OR ".join(
+            [f"p.text ILIKE %(hashtag{i})s" for i, _ in enumerate(MONITORED_HASHTAGS)]
+        )
+
         # Start with base query and parameters
-        query = """
+        query = f"""
             SELECT DISTINCT p.uri, p.cid, p.timestamp 
             FROM posts p
             INNER JOIN subscribers s ON p.author = s.did
-            WHERE p.text ILIKE %(hashtag)s
+            WHERE ({hashtag_conditions})
         """
 
-        params = {"hashtag": "%#SaskEdChat%"}
+        # Create parameters dict with all hashtags
+        params = {f"hashtag{i}": f"%{tag}%" for i, tag in enumerate(MONITORED_HASHTAGS)}
 
         # Add cursor condition if present
         if cursor:
-            query += " AND p.timestamp < %(cursor)s "
+            query += " AND p.timestamp < %(cursor)s"
             params["cursor"] = int(cursor)
 
         # Add ordering and limit
@@ -359,27 +415,33 @@ async def get_feed_skeleton(
                 logger.info(f"Retrieved {len(rows)} rows from database")
             except Exception as db_error:
                 logger.error(f"Database error: {str(db_error)}")
-                return {"cursor": None, "feed": []}
+                raise HTTPException(status_code=500, detail=str(db_error))
 
             if not rows:
                 logger.info("No posts found")
-                return {"cursor": None, "feed": []}
+                return {"feed": [], "cursor": None}
 
             feed_items = []
             for row in rows:
-                feed_items.append({"post": row[0]})  # uri
+                post_uri = row[0]
+                feed_items.append(
+                    {
+                        "post": post_uri,
+                    }
+                )
 
             next_cursor = str(rows[-1][2]) if rows else None
 
-            response = {"cursor": next_cursor, "feed": feed_items}
-
-            logger.info(f"Returning response: {response}")
-            return response
+            result = {"feed": feed_items, "cursor": next_cursor}
+            
+            # Cache the result before returning
+            feed_cache.set(cache_key, result)
+            return result
 
     except Exception as e:
         logger.error(f"Feed error: {str(e)}")
         logger.exception("Detailed feed error:")
-        return {"cursor": None, "feed": []}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Main Functionality
@@ -389,100 +451,105 @@ async def handle_subscription(subscription: Subscription):
         created_at = datetime.fromisoformat(subscription.createdAt)
 
         with db.get_cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO subscribers (did, handle, timestamp)
-                VALUES (%(did)s, %(handle)s, %(timestamp)s)
-                ON CONFLICT (did) DO UPDATE SET
-                    handle = EXCLUDED.handle,
-                    timestamp = EXCLUDED.timestamp
-                """,
-                {
-                    "did": subscription.subject.did,
-                    "handle": subscription.service.handle,
-                    "timestamp": int(created_at.timestamp() * 1000),
-                },
-            )
-        return {"status": "success"}
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO subscribers (did, handle, timestamp)
+                    VALUES (%(did)s, %(handle)s, %(timestamp)s)
+                    ON CONFLICT (did) DO UPDATE SET
+                        handle = EXCLUDED.handle,
+                        timestamp = EXCLUDED.timestamp
+                    """,
+                    {
+                        "did": subscription.subject.did,
+                        "handle": subscription.service.handle,
+                        "timestamp": int(created_at.timestamp() * 1000),
+                    },
+                )
+                return {"status": "success"}
+            except errors.UniqueViolation:
+                # Handle duplicate subscription
+                return {"status": "success", "message": "Subscription already exists"}
+            except errors.OperationalError as e:
+                logger.error(f"Database operation failed: {str(e)}")
+                raise HTTPException(
+                    status_code=503, detail="Service temporarily unavailable"
+                )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.error(f"Subscription error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/post")
 async def handle_post(post: Post, response: Response):
     try:
         logger.info("=== Starting Post Processing ===")
-        logger.info(f"Post URI: {post.uri}")
-        logger.info(f"Post Text: {post.record.get('text', '')}")
-        logger.info(f"Author DID: {post.author['did']}")
 
-        # Check if author is a subscriber first
         with db.get_cursor() as cursor:
-            logger.info("Checking subscriber status...")
-            cursor.execute(
-                "SELECT did FROM subscribers WHERE did = $1", (post.author["did"],)
-            )
-            subscriber = cursor.fetchone()
-            logger.info(f"Subscriber found: {subscriber}")
+            try:
+                # Check subscriber status
+                cursor.execute(
+                    "SELECT did FROM subscribers WHERE did = %(did)s",
+                    {"did": post.author["did"]},
+                )
+                subscriber = cursor.fetchone()
 
-            # Only check hashtags if user is a subscriber
-            post_text = post.record.get("text", "").lower()
-            logger.info(f"Checking text for hashtags: {post_text}")
+                if not subscriber:
+                    return {"status": "ignored", "reason": "Not a subscriber"}
 
-            found_hashtags = [
-                tag for tag in MONITORED_HASHTAGS if tag.lower() in post_text
-            ]
-            logger.info(f"Found hashtags: {found_hashtags}")
+                post_text = post.record.get("text", "").lower()
+                found_hashtags = [
+                    tag for tag in MONITORED_HASHTAGS if tag.lower() in post_text
+                ]
 
-            if found_hashtags:
-                logger.info("Attempting to store post...")
-                try:
+                if found_hashtags:
                     cursor.execute(
                         """
                         INSERT INTO posts (uri, cid, author, text, timestamp)
-                        VALUES ($1, $2, $3, $4, $5)
+                        VALUES (%(uri)s, %(cid)s, %(author)s, %(text)s, %(timestamp)s)
                         ON CONFLICT (uri) DO UPDATE SET
                             cid = EXCLUDED.cid,
                             author = EXCLUDED.author,
                             text = EXCLUDED.text,
                             timestamp = EXCLUDED.timestamp
                         """,
-                        (
-                            post.uri,
-                            post.cid,
-                            post.author["did"],
-                            post_text,
-                            int(
+                        {
+                            "uri": post.uri,
+                            "cid": post.cid,
+                            "author": post.author["did"],
+                            "text": post_text,
+                            "timestamp": int(
                                 datetime.fromisoformat(
                                     post.record["createdAt"]
                                 ).timestamp()
                                 * 1000
                             ),
-                        ),
+                        },
                     )
-                    logger.info("Post stored successfully")
-                except Exception as e:
-                    logger.error(f"Database error while storing post: {str(e)}")
-                    raise
+                    return {
+                        "status": "success",
+                        "matched_hashtags": found_hashtags,
+                        "user": post.author["did"],
+                    }
+                return {"status": "ignored", "reason": "No matching hashtags"}
 
-        return {
-            "status": "success",
-            "matched_hashtags": found_hashtags,
-            "user": post.author["did"],
-        }
-
+            except errors.UniqueViolation:
+                # This is not necessarily an error for posts
+                return {"status": "success", "message": "Post already exists"}
+            except errors.OperationalError as e:
+                logger.error(f"Database operation failed: {str(e)}")
+                raise HTTPException(
+                    status_code=503, detail="Service temporarily unavailable"
+                )
     except Exception as e:
         logger.error(f"Post processing error: {str(e)}")
         logger.exception("Detailed error:")
-        return {"status": "error", "detail": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Debug Endpoints
-
-
 @app.get("/debug/posts")
 async def debug_posts():
     try:
@@ -491,9 +558,9 @@ async def debug_posts():
                 """
                 SELECT * FROM posts 
                 ORDER BY timestamp DESC 
-                LIMIT $1
+                LIMIT %(limit)s
                 """,
-                (10,),
+                {"limit": 10},
             )
             posts = cursor.fetchall()
 
@@ -538,7 +605,7 @@ async def debug_subscribe():
                     timestamp = EXCLUDED.timestamp
                 """,
                 {
-                    "did": "did:web:web-production-6afef.up.railway.app",
+                    "did": "did:plc:yhebq6pwmyhlhdyhosu7jpmi",  # Updated DID
                     "handle": "sask-ed-feed.bsky.social",
                     "timestamp": int(datetime.now().timestamp() * 1000),
                 },
@@ -554,9 +621,9 @@ async def add_test_post():
     try:
         with db.get_cursor() as cursor:
             test_post = {
-                "uri": "test_uri",
+                "uri": f"at://did:plc:yhebq6pwmyhlhdyhosu7jpmi/app.bsky.feed.post/{datetime.now().timestamp()}",
                 "cid": "test_cid",
-                "author": "did:web:web-production-6afef.up.railway.app",
+                "author": "did:plc:yhebq6pwmyhlhdyhosu7jpmi",  # Updated DID
                 "text": "This is a test post #SaskEdChat",
                 "timestamp": int(datetime.now().timestamp() * 1000),
             }

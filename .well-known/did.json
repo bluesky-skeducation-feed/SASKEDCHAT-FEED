@@ -1,9 +1,14 @@
 {
   "@context": ["https://www.w3.org/ns/did/v1"],
-  "id": "did:web:web-production-6afef.up.railway.app",
-  "service": [{
-    "id": "#bsky_fg",
-    "type": "BskyFeedGenerator",
-    "serviceEndpoint": "http://web-production-6afef.up.railway.app"
-  }]
+  "id": "did:plc:yhebq6pwmyhlhdyhosu7jpmi",
+  "alsoKnownAs": [],
+  "authentication": [],
+  "verificationMethod": [],
+  "service": [
+    {
+      "id": "#bsky_fg",
+      "type": "BskyFeedGenerator",
+      "serviceEndpoint": "https://web-production-6afef.up.railway.app"
+    }
+  ]
 }
