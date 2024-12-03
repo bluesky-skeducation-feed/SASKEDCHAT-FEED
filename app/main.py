@@ -347,8 +347,7 @@ async def did_json():
             {
                 "id": "#bsky_fg",
                 "type": "BskyFeedGenerator",
-                "serviceEndpoint": service_endpoint,
-                "uri": f"{service_endpoint}/xrpc/app.bsky.feed.describeFeedGenerator"
+                "serviceEndpoint": service_endpoint
             }
         ]
     }
