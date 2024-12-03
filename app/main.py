@@ -500,15 +500,15 @@ async def get_feed_skeleton(
 @app.get("/xrpc/app.bsky.feed.describeFeedGenerator")
 async def describe_feed_generator():
     return {
-        "did": "did:web:web-production-96221.up.railway.app",
+        "did": "did:web:web-production-6afef.up.railway.app",
         "feeds": [
             {
-                "uri": "at://did:web:web-production-96221.up.railway.app/app.bsky.feed.generator/saskedchat",
+                "uri": "at://did:web:web-production-6afef.up.railway.app/app.bsky.feed.generator/saskedchat",
                 "name": "saskedchat",
                 "displayName": "SaskEdChat Feed",
                 "description": "A feed aggregating posts with Saskatchewan education-related hashtags",
             }
-        ],
+        ]
     }
 
 
