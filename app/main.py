@@ -334,6 +334,9 @@ async def healthcheck(request: Request):
 
 @app.get("/.well-known/did.json")
 async def did_json():
+    """DID Document for the feed generator"""
+    service_endpoint = "https://web-production-6afef.up.railway.app"
+    
     return {
         "@context": ["https://www.w3.org/ns/did/v1"],
         "id": "did:plc:yhebq6pwmyhlhdyhosu7jpmi",
@@ -344,33 +347,28 @@ async def did_json():
             {
                 "id": "#bsky_fg",
                 "type": "BskyFeedGenerator",
-                "serviceEndpoint": "https://web-production-6afef.up.railway.app",
+                "serviceEndpoint": service_endpoint,
+                "uri": f"{service_endpoint}/xrpc/app.bsky.feed.describeFeedGenerator"
             }
-        ],
+        ]
     }
-
 
 # Feed Generator Endpoints
 @app.get("/xrpc/app.bsky.feed.describeFeedGenerator")
 async def describe_feed_generator():
-    feed_uri = (
-        "at://did:plc:yhebq6pwmyhlhdyhosu7jpmi/app.bsky.feed.generator/saskedchat"
-    )
-
+    """Describe the feed generator service"""
     return {
         "did": "did:plc:yhebq6pwmyhlhdyhosu7jpmi",
         "feeds": [
             {
-                "uri": feed_uri,
-                "cid": "bafyreid27zk7lbis4zw5fz4podbvhs4rrhdzw2fv47x4jweqbwixr2urm4",  # Add CID here
+                "uri": "at://did:plc:yhebq6pwmyhlhdyhosu7jpmi/app.bsky.feed.generator/saskedchat",
+                "cid": "bafyreid27zk7lbis4zw5fz4podbvhs4rrhdzw2fv47x4jweqbwixr2urm4",
                 "name": "saskedchat",
                 "displayName": "SaskEdChat Feed",
                 "description": "A feed aggregating posts with Saskatchewan education-related hashtags",
-                "avatar": None,  # Optional avatar URL
             }
-        ],
+        ]
     }
-
 
 @app.get("/xrpc/app.bsky.feed.getFeedSkeleton")
 async def get_feed_skeleton(
