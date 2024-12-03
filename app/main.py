@@ -272,6 +272,7 @@ except (ValueError, ConnectionError) as e:
     app.state.bsky_client = None
 
 
+# Core Service
 @app.get("/healthcheck")
 async def healthcheck(request: Request):
     """Check if the service is running and database is accessible"""
@@ -289,6 +290,102 @@ async def healthcheck(request: Request):
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 
+@app.get("/.well-known/did.json")
+async def did_json():
+    return {
+        "@context": ["https://www.w3.org/ns/did/v1"],
+        "id": "did:web:web-production-6afef.up.railway.app",
+        "service": [
+            {
+                "id": "#bsky_fg",
+                "type": "BskyFeedGenerator",
+                "serviceEndpoint": "https://web-production-6afef.up.railway.app",
+            }
+        ],
+    }
+
+
+# Feed Generator Endpoints
+@app.get("/xrpc/app.bsky.feed.describeFeedGenerator")
+async def describe_feed_generator():
+    return {
+        "did": "did:web:web-production-6afef.up.railway.app",
+        "feeds": [
+            {
+                "uri": "at://did:web:web-production-6afef.up.railway.app/app.bsky.feed.generator/saskedchat",
+                "name": "saskedchat",
+                "displayName": "SaskEdChat Feed",
+                "description": "A feed aggregating posts with Saskatchewan education-related hashtags",
+            }
+        ],
+    }
+
+
+@app.get("/xrpc/app.bsky.feed.getFeedSkeleton")
+async def get_feed_skeleton(
+    feed: str,
+    cursor: Optional[str] = None,
+    limit: Optional[int] = 30,
+):
+    try:
+        logger.info(f"Feed request received - cursor: {cursor}, limit: {limit}")
+
+        # Start with base query
+        query = """
+            SELECT DISTINCT p.uri, p.cid, p.timestamp 
+            FROM posts p
+            INNER JOIN subscribers s ON p.author = s.did
+            WHERE p.text ILIKE $1
+        """
+
+        params = ["%#SaskEdChat%"]
+        param_count = 1
+
+        # Add cursor condition if present
+        if cursor:
+            param_count += 1
+            query += f" AND p.timestamp < ${param_count} "
+            params.append(int(cursor))
+
+        # Add ordering and limit
+        param_count += 1
+        query += f" ORDER BY p.timestamp DESC LIMIT ${param_count}"
+        params.append(limit if limit is not None else 30)
+
+        logger.info(f"Executing query: {query}")
+        logger.info(f"Query parameters: {params}")
+
+        with db.get_cursor() as cursor_db:
+            try:
+                cursor_db.execute(query, params)
+                rows = cursor_db.fetchall()
+                logger.info(f"Retrieved {len(rows)} rows from database")
+            except Exception as db_error:
+                logger.error(f"Database error: {str(db_error)}")
+                return {"cursor": None, "feed": []}
+
+            if not rows:
+                logger.info("No posts found")
+                return {"cursor": None, "feed": []}
+
+            feed_items = []
+            for row in rows:
+                feed_items.append({"post": row[0]})  # uri
+
+            next_cursor = str(rows[-1][2]) if rows else None
+
+            response = {"cursor": next_cursor, "feed": feed_items}
+
+            logger.info(f"Returning response: {response}")
+            return response
+
+    except Exception as e:
+        logger.error(f"Feed error: {str(e)}")
+        logger.exception("Detailed feed error:")
+        return {"cursor": None, "feed": []}
+
+
+# Main Functionality
 @app.post("/subscription")
 async def handle_subscription(subscription: Subscription):
     """Handle new subscription requests"""
@@ -298,8 +395,11 @@ async def handle_subscription(subscription: Subscription):
         with db.get_cursor() as cursor:
             cursor.execute(
                 """
-                INSERT OR REPLACE INTO subscribers (did, handle, timestamp)
-                VALUES (?, ?, ?)
+                INSERT INTO subscribers (did, handle, timestamp)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (did) DO UPDATE SET
+                    handle = EXCLUDED.handle,
+                    timestamp = EXCLUDED.timestamp
                 """,
                 (
                     subscription.subject.did,
@@ -327,7 +427,7 @@ async def handle_post(post: Post, response: Response):
         with db.get_cursor() as cursor:
             logger.info("Checking subscriber status...")
             cursor.execute(
-                "SELECT did FROM subscribers WHERE did = ?", (post.author["did"],)
+                "SELECT did FROM subscribers WHERE did = $1", (post.author["did"],)
             )
             subscriber = cursor.fetchone()
             logger.info(f"Subscriber found: {subscriber}")
@@ -346,8 +446,13 @@ async def handle_post(post: Post, response: Response):
                 try:
                     cursor.execute(
                         """
-                        INSERT OR REPLACE INTO posts (uri, cid, author, text, timestamp)
-                        VALUES (?, ?, ?, ?, ?)
+                        INSERT INTO posts (uri, cid, author, text, timestamp)
+                        VALUES ($1, $2, $3, $4, $5)
+                        ON CONFLICT (uri) DO UPDATE SET
+                            cid = EXCLUDED.cid,
+                            author = EXCLUDED.author,
+                            text = EXCLUDED.text,
+                            timestamp = EXCLUDED.timestamp
                         """,
                         (
                             post.uri,
@@ -379,184 +484,20 @@ async def handle_post(post: Post, response: Response):
         return {"status": "error", "detail": str(e)}
 
 
-@app.get("/xrpc/app.bsky.feed.getFeedSkeleton")
-async def get_feed_skeleton(
-    feed: str,
-    cursor: Optional[str] = None,
-    limit: Optional[int] = 30,
-):
-    try:
-        logger.info(f"Feed request received - cursor: {cursor}, limit: {limit}")
-        
-        # Start with base query
-        query = """
-            SELECT DISTINCT p.uri, p.cid, p.timestamp 
-            FROM posts p
-            INNER JOIN subscribers s ON p.author = s.did
-            WHERE p.text LIKE '%#SaskEdChat%'
-        """
-        
-        params = []
-        
-        # Add cursor condition if present
-        if cursor:
-            query += " AND p.timestamp < ? "
-            params.append(int(cursor))
-        
-        # Add ordering and limit
-        query += " ORDER BY p.timestamp DESC "
-        
-        # Add limit parameter
-        if limit is not None:
-            query += " LIMIT ? "
-            params.append(limit)
-        else:
-            query += " LIMIT 30 "
-        
-        logger.info(f"Executing query: {query}")
-        logger.info(f"Query parameters: {params}")
-        
-        with db.get_cursor() as cursor_db:
-            try:
-                cursor_db.execute(query, params)
-                rows = cursor_db.fetchall()
-                logger.info(f"Retrieved {len(rows)} rows from database")
-            except Exception as db_error:
-                logger.error(f"Database error: {str(db_error)}")
-                return {"cursor": None, "feed": []}
-            
-            if not rows:
-                logger.info("No posts found")
-                return {"cursor": None, "feed": []}
-            
-            feed_items = []
-            for row in rows:
-                feed_items.append({
-                    "post": row[0]  # uri
-                })
-            
-            next_cursor = str(rows[-1][2]) if rows else None
-            
-            response = {
-                "cursor": next_cursor,
-                "feed": feed_items
-            }
-            
-            logger.info(f"Returning response: {response}")
-            return response
-            
-    except Exception as e:
-        logger.error(f"Feed error: {str(e)}")
-        logger.exception("Detailed feed error:")
-        return {"cursor": None, "feed": []}
-
-
-@app.get("/.well-known/did.json")
-async def did_json():
-    return {
-        "@context": ["https://www.w3.org/ns/did/v1"],
-        "id": "did:web:web-production-6afef.up.railway.app",
-        "service": [
-            {
-                "id": "#bsky_fg",
-                "type": "BskyFeedGenerator",
-                "serviceEndpoint": "https://web-production-6afef.up.railway.app",
-            }
-        ],
-    }
-
-
-@app.get("/xrpc/app.bsky.feed.getFeedSkeleton")
-async def get_feed_skeleton(
-    feed: str,
-    cursor: Optional[str] = None,
-    limit: Optional[int] = 30,
-):
-    try:
-        logger.info(f"Feed request received - cursor: {cursor}, limit: {limit}")
-
-        # Handle the case where limit is None
-        query_limit = limit if limit is not None else 30
-
-        query = """
-            SELECT DISTINCT p.uri, p.cid, p.timestamp 
-            FROM posts p
-            INNER JOIN subscribers s ON p.author = s.did
-            WHERE p.text LIKE ?
-        """
-
-        params = ["%#SaskEdChat%"]  # Start with the LIKE parameter
-
-        if cursor:
-            query += " AND p.timestamp < ?"
-            params.append(int(cursor))
-
-        query += " ORDER BY p.timestamp DESC LIMIT ?"
-        params.append(query_limit)
-
-        logger.info(f"Executing query: {query}")
-        logger.info(f"Query parameters: {params}")
-
-        with db.get_cursor() as cursor_db:
-            try:
-                cursor_db.execute(query, params)
-                rows = cursor_db.fetchall()
-                logger.info(f"Retrieved {len(rows)} rows from database")
-            except Exception as db_error:
-                logger.error(f"Database error: {str(db_error)}")
-                return {"cursor": None, "feed": []}
-
-            if not rows:
-                logger.info("No posts found")
-                return {"cursor": None, "feed": []}
-
-            feed_items = []
-            for row in rows:
-                feed_items.append(
-                    {
-                        "post": row[0],  # uri
-                    }
-                )
-
-            next_cursor = str(rows[-1][2]) if rows else None
-
-            response = {"cursor": next_cursor, "feed": feed_items}
-
-            logger.info(f"Returning response: {response}")
-            return response
-
-    except Exception as e:
-        logger.error(f"Feed error: {str(e)}")
-        logger.exception("Detailed feed error:")
-        return {"cursor": None, "feed": []}
-
-
-@app.get("/xrpc/app.bsky.feed.describeFeedGenerator")
-async def describe_feed_generator():
-    return {
-        "did": "did:web:web-production-6afef.up.railway.app",
-        "feeds": [
-            {
-                "uri": "at://did:web:web-production-6afef.up.railway.app/app.bsky.feed.generator/saskedchat",
-                "name": "saskedchat",
-                "displayName": "SaskEdChat Feed",
-                "description": "A feed aggregating posts with Saskatchewan education-related hashtags",
-            }
-        ],
-    }
+# Debug Endpoints
 
 
 @app.get("/debug/posts")
 async def debug_posts():
-    """Debug endpoint to check posts in database"""
     try:
         with db.get_cursor() as cursor:
             cursor.execute(
                 """
                 SELECT * FROM posts 
                 ORDER BY timestamp DESC 
-                LIMIT 10
-            """
+                LIMIT $1
+                """,
+                (10,),
             )
             posts = cursor.fetchall()
 
@@ -594,8 +535,11 @@ async def debug_subscribe():
         with db.get_cursor() as cursor:
             cursor.execute(
                 """
-                INSERT OR REPLACE INTO subscribers (did, handle, timestamp)
-                VALUES (?, ?, ?)
+                INSERT INTO subscribers (did, handle, timestamp)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (did) DO UPDATE SET
+                    handle = EXCLUDED.handle,
+                    timestamp = EXCLUDED.timestamp
                 """,
                 (
                     "did:web:web-production-96221.up.railway.app",
@@ -623,8 +567,13 @@ async def add_test_post():
 
             cursor.execute(
                 """
-                INSERT OR REPLACE INTO posts (uri, cid, author, text, timestamp)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO posts (uri, cid, author, text, timestamp)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT (uri) DO UPDATE SET
+                    cid = EXCLUDED.cid,
+                    author = EXCLUDED.author,
+                    text = EXCLUDED.text,
+                    timestamp = EXCLUDED.timestamp
                 """,
                 (
                     test_post["uri"],
