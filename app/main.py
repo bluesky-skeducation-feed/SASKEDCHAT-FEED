@@ -386,6 +386,7 @@ async def get_feed_skeleton(
             FROM posts p
             INNER JOIN subscribers s ON p.author = s.did
             WHERE ({hashtag_conditions})
+            AND p.cid != 'test_cid'  -- Exclude test posts with invalid CIDs
         """
 
         # Create parameters dict with all hashtags
@@ -411,37 +412,36 @@ async def get_feed_skeleton(
 
             if not rows:
                 logger.info("No posts found")
-                return {"feed": [], "cursor": None}
+                response = {"feed": [], "cursor": None}
+                logger.info(f"Empty response: {response}")
+                return response
 
             feed_items = []
             for row in rows:
                 post_uri = row[0]
                 # Log the full row data for debugging
                 logger.info(f"Processing row: {row}")
-                
-                if not post_uri.startswith("at://"):
-                    post_uri = f"at://{post_uri}" if not post_uri.startswith("at:/") else post_uri
-                
-                feed_items.append({
-                    "post": post_uri
-                })
 
-            next_cursor = str(rows[-1][2]) if rows else None
-            
-            # Ensure the response exactly matches Bluesky's expected format
-            result = {
-                "cursor": next_cursor,
-                "feed": feed_items
+                if not post_uri.startswith("at://"):
+                    post_uri = f"at://{post_uri}"
+
+                # Simpler post structure
+                feed_items.append({"post": post_uri})
+
+            response = {
+                "feed": feed_items,
+                "cursor": str(rows[-1][2]) if rows else None,
             }
-            
-            # Log the exact response for debugging
-            logger.info(f"Final feed response: {result}")
-            return result
+
+            logger.info(f"Final response structure: {response}")
+            return response
 
     except Exception as e:
         logger.error(f"Feed error: {str(e)}")
         logger.exception("Detailed feed error:")
         raise HTTPException(status_code=500, detail=str(e))
+
+
 # Main Functionality
 @app.post("/subscription")
 async def handle_subscription(subscription: Subscription):
@@ -621,7 +621,7 @@ async def add_test_post():
             # Generate a proper Bluesky post URI
             timestamp = int(datetime.now().timestamp() * 1000)
             rkey = f"{timestamp:x}"  # Convert timestamp to hex for rkey
-            
+
             # Use a valid CID format (example format)
             test_post = {
                 "uri": f"at://did:plc:yhebq6pwmyhlhdyhosu7jpmi/app.bsky.feed.post/{rkey}",
@@ -643,12 +643,16 @@ async def add_test_post():
                 """,
                 test_post,
             )
-            
-            logger.info(f"Created test post with URI: {test_post['uri']} and CID: {test_post['cid']}")
+
+            logger.info(
+                f"Created test post with URI: {test_post['uri']} and CID: {test_post['cid']}"
+            )
             return {"status": "success", "post": test_post}
     except Exception as e:
         logger.error(f"Error creating test post: {str(e)}")
         return {"error": str(e)}
+
+
 if __name__ == "__main__":
     import uvicorn
 
