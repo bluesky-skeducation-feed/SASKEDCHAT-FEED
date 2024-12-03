@@ -473,33 +473,37 @@ async def did_json():
 async def get_feed_skeleton(
     feed: str,
     cursor: Optional[str] = None,
-    limit: Optional[int] = 50,
+    limit: Optional[int] = 30,  # Default to 30 as that's what Bluesky is requesting
 ):
     try:
+        logger.info(f"Feed request received - cursor: {cursor}, limit: {limit}")
+        
+        params = []
+        query = """
+            SELECT DISTINCT p.uri, p.cid, p.timestamp 
+            FROM posts p
+            INNER JOIN subscribers s ON p.author = s.did
+            WHERE p.text LIKE '%#SaskEdChat%'
+        """
+        
+        if cursor:
+            query += " AND p.timestamp < ?"
+            params.append(int(cursor))
+        
+        query += " ORDER BY p.timestamp DESC LIMIT ?"
+        params.append(limit if limit is not None else 30)  # Ensure we always have at least one parameter
+        
+        logger.info(f"Executing query: {query} with params: {params}")
+        
         with db.get_cursor() as cursor_db:
-            params = []
-            query = """
-                SELECT DISTINCT p.uri, p.cid, p.timestamp 
-                FROM posts p
-                INNER JOIN subscribers s ON p.author = s.did
-                WHERE p.text LIKE '%#SaskEdChat%'
-            """
-            
-            if cursor:
-                query += " AND p.timestamp < ?"
-                params.append(int(cursor))
-            
-            query += " ORDER BY p.timestamp DESC"
-            
-            if limit:
-                query += " LIMIT ?"
-                params.append(int(limit))
-            
             cursor_db.execute(query, params)
             rows = cursor_db.fetchall()
             
+            logger.info(f"Query returned {len(rows)} rows")
+            
             # Handle empty results
             if not rows:
+                logger.info("No results found, returning empty feed")
                 return {
                     "cursor": None,
                     "feed": []
@@ -512,8 +516,8 @@ async def get_feed_skeleton(
                 for row in rows
             ]
             
-            # Only set next_cursor if we have results
             next_cursor = str(rows[-1][2]) if rows else None
+            logger.info(f"Returning feed with {len(feed_items)} items and cursor: {next_cursor}")
             
             return {
                 "cursor": next_cursor,
@@ -523,7 +527,10 @@ async def get_feed_skeleton(
     except Exception as e:
         logger.error(f"Feed error: {str(e)}")
         logger.exception("Detailed feed error:")
-        raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "cursor": None,
+            "feed": []
+        }  # Return empty feed instead of throwing 500 error
 
 
 @app.get("/xrpc/app.bsky.feed.describeFeedGenerator")
